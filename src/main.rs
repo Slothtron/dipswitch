@@ -1,8 +1,9 @@
-//! 二进制入口：初始化框架、打开配置库、绑定快捷键、创建工作台窗口。
+//! 二进制入口：初始化框架、打开配置库、绑定快捷键、创建应用窗口。
 
 use dipswitch::{
     environment_view::{self, AddVariable, NewGroup, ReloadVariables},
     fonts_view::{CopyFamilyName, FocusSearch, KEY_CONTEXT as FONTS_KEY_CONTEXT, RefreshFonts},
+    icon::AppAssets,
     settings::{self, Settings},
     shell::{Dipswitch, KEY_CONTEXT, ShowEnvironment, ShowFonts, ToggleNavigation},
     store::DipswitchStore,
@@ -16,7 +17,8 @@ use gpui_kit::{
 
 fn main() {
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        // 组件默认包 + 本应用额外嵌入的图标，见 icon::AppAssets。
+        .with_assets(AppAssets)
         .run(|cx| {
             // 必须先初始化 Component/Base，再创建任何组件视图。
             gpui_kit::init(cx);

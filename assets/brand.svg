@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="dipswitch">
+  <rect width="64" height="64" rx="14" fill="#10141A"/>
+  <rect x="14" y="25" width="28" height="31" rx="9" fill="#FF4D2E"/>
+  <rect x="21" y="32" width="14" height="17" rx="5" fill="#10141A"/>
+  <rect x="21" y="32" width="14" height="9" rx="4" fill="#E6ECF2"/>
+  <rect x="37" y="8" width="11" height="48" rx="3" fill="#E6ECF2"/>
+</svg>

@@ -16,7 +16,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, WeakEntity, Window, actions,
     base::{InteractiveElementExt as _, StyledExt},
     component::{
-        ActiveTheme, Icon, IconName, Selectable, Sizable, WindowExt,
+        ActiveTheme, Icon, Selectable, Sizable, WindowExt,
         button::{Button, ButtonVariants},
         checkbox::Checkbox,
         dialog::{DialogAction, DialogClose, DialogFooter},
@@ -34,6 +34,7 @@ use gpui_kit::{
 use crate::{
     env_model::{self, EnvGroup, GroupVariable, KeyOrigin, validate_key, validate_value},
     env_service::{self, ReconcileReport, SystemEnvBackend},
+    icon::AppIcon,
     store::DipswitchStore,
     system_env::{self, SystemVariable, ValueKind},
 };
@@ -553,7 +554,7 @@ impl EnvironmentModule {
                         Button::new("reload-environment")
                             .ghost()
                             .small()
-                            .icon(IconName::RefreshCw)
+                            .icon(AppIcon::Refresh)
                             .label("Reload")
                             .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
                     ),
@@ -571,12 +572,12 @@ impl EnvironmentModule {
                 this.child(
                     div()
                         .w_64()
-                        .child(Input::new(&self.search).w_full().cleanable(true).prefix(Icon::new(IconName::Search).small())),
+                        .child(Input::new(&self.search).w_full().cleanable(true).prefix(Icon::new(AppIcon::Search).small())),
                 )
                 .child(
                     Button::new("add-variable")
                         .label("Add variable")
-                        .icon(IconName::Plus)
+                        .icon(AppIcon::Add)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_variable_dialog(VariableTarget::NewSystem, window, cx);
                         })),
@@ -588,7 +589,7 @@ impl EnvironmentModule {
                 this.child(
                     Button::new("new-group")
                         .label("New group")
-                        .icon(IconName::Folder)
+                        .icon(AppIcon::NewGroup)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_group_dialog(None, window, cx);
                         })),
@@ -752,7 +753,7 @@ impl EnvironmentModule {
                             Button::new(format!("copy-variable-{key}"))
                                 .ghost()
                                 .xsmall()
-                                .icon(IconName::Copy)
+                                .icon(AppIcon::Copy)
                                 .tooltip("Copy value")
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.copy_value(copy_value.clone(), window, cx);
@@ -762,7 +763,7 @@ impl EnvironmentModule {
                             Button::new(format!("more-variable-{key}"))
                                 .ghost()
                                 .xsmall()
-                                .icon(IconName::Ellipsis)
+                                .icon(AppIcon::More)
                                 .dropdown_menu({
                                     let weak = cx.weak_entity();
                                     let manager_label = manager.clone();
@@ -1095,7 +1096,7 @@ impl EnvironmentModule {
                     .child(
                         Button::new("add-group-variable")
                             .label("Add variable")
-                            .icon(IconName::Plus)
+                            .icon(AppIcon::Add)
                             .small()
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_variable_dialog(
@@ -1109,7 +1110,7 @@ impl EnvironmentModule {
                         Button::new("rename-group")
                             .ghost()
                             .small()
-                            .icon(IconName::Replace)
+                            .icon(AppIcon::Edit)
                             .tooltip("Rename group")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_group_dialog(Some(group.id), window, cx);
@@ -1119,7 +1120,7 @@ impl EnvironmentModule {
                         Button::new("delete-group")
                             .ghost()
                             .small()
-                            .icon(IconName::Delete)
+                            .icon(AppIcon::Delete)
                             .tooltip("Delete group")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 let name = this.group_name(group.id);
@@ -1159,7 +1160,7 @@ impl EnvironmentModule {
                         .gap_2()
                         .text_xs()
                         .text_color(cx.theme().warning)
-                        .child(Icon::new(IconName::CircleAlert).small())
+                        .child(Icon::new(AppIcon::Warning).small())
                         .child(format!(
                             "{conflicts} variables are overridden by a group enabled later"
                         )),
@@ -1335,7 +1336,7 @@ impl EnvironmentModule {
                             Button::new(format!("copy-group-variable-{key}"))
                                 .ghost()
                                 .xsmall()
-                                .icon(IconName::Copy)
+                                .icon(AppIcon::Copy)
                                 .tooltip("Copy value")
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.copy_value(value.clone(), window, cx);
@@ -1345,7 +1346,7 @@ impl EnvironmentModule {
                             Button::new(format!("edit-group-variable-{key}"))
                                 .ghost()
                                 .xsmall()
-                                .icon(IconName::Replace)
+                                .icon(AppIcon::Edit)
                                 .tooltip("Edit in this group")
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_variable_dialog(edit_target.clone(), window, cx);
@@ -1355,7 +1356,7 @@ impl EnvironmentModule {
                             Button::new(format!("delete-group-variable-{id}"))
                                 .ghost()
                                 .xsmall()
-                                .icon(IconName::Delete)
+                                .icon(AppIcon::Delete)
                                 .tooltip("Remove from group")
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.delete_group_variable(id, window, cx);
@@ -1375,7 +1376,7 @@ impl EnvironmentModule {
             .justify_center()
             .gap_2()
             .child(
-                Icon::new(IconName::Inbox)
+                Icon::new(AppIcon::Empty)
                     .size_8()
                     .text_color(cx.theme().muted_foreground.opacity(0.6)),
             )
@@ -1399,7 +1400,7 @@ impl EnvironmentModule {
             .gap_3()
             .p_8()
             .child(
-                Icon::new(IconName::CircleAlert)
+                Icon::new(AppIcon::Error)
                     .size_8()
                     .text_color(cx.theme().danger),
             )

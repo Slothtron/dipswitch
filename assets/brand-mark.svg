@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="dipswitch">
+  <!-- 与 assets/brand.svg 同一套几何，但按 Lucide 的单色描边语言重画：
+       GPUI 的 Icon 走 alpha 蒙版着色，多色填充会被压成一片剪影。
+       碗部留空（描边不填充）才是真正的镂空，右侧竖线是 d 的升部。 -->
+  <path d="M17 3v18"/>
+  <rect x="4" y="9" width="13" height="12" rx="4"/>
+  <path d="M8 12.5h5" stroke-width="3"/>
+</svg>

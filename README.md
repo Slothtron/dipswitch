@@ -46,6 +46,16 @@
 - **变更流水**：每次启用/停用/删除都会记一条 `env_event`，分组详情底部显示最近几条，可单独清空。
 - **非 Windows 平台**：写入落点退化为「当前进程环境」，界面上的 scope 文案会如实说明，不会假装已经持久化。
 
+## 图标
+
+全部界面图标来自**同一个家族**（Lucide，24×24 网格、2px 描边、圆头端点），所以风格天然统一；组件自带的窗口按钮也是 Lucide，不需要额外对齐。
+
+- **语义命名，不按形状命名**：`src/icon.rs` 的 `AppIcon` 是应用内图标的唯一出口，变体叫 `Delete`、`Edit`、`NewGroup`、`Recent`，不叫 `Trash`、`Pencil`。图形在哪、为什么选它，集中写在 `AppIcon::icon_name()` 一个 `match` 里，改图形不影响调用点。
+- **不受组件层 106 个的限制**：`gpui_component::IconName` 只是 `gpui_kit_assets::IconName`（1,830 个）的兼容子集，而组件 API 收的是 `impl Into<Icon>`、`Icon` 对任何实现 `IconNamed` 的枚举有 blanket `From`——所以全量目录都能用。代价是共享枚举给出的是**路径**，默认包只嵌了那 106 个的字节，因此本应用用到的子集之外图形由 `icon_assets!` 点名嵌入（当前 10 个，约 +19 KiB）。
+- **漏登记会立刻失败**：`icon::tests::every_app_icon_resolves_through_the_registered_source` 逐个断言 `AppIcon` 的图形能从注册后的资产源取到 SVG 字节——用了没登记的图形不会编译报错，只会在界面上画出一片空白，这条测试就是拦它的。
+- **品牌标**：一枚字母 `d`，碗部是一格打到 ON 的开关。任务栏/文件图标用全彩版，标题栏用单色描边版（原因见「实现要点」）。
+- 语义修正记录：`Compare` 由「仪表盘」改为两栏并排、`Recent` 由「顺时针箭头」改为时钟（原来与「重新扫描」撞形）、`Edit` 由「查找替换」改为铅笔、`Delete` 由「退格键」改为垃圾桶、`NewGroup` 由「文件夹」改为新建文件夹、`Environment` 由终端方块改为 `Variable`、`Monospace` 由「大小写」改为花括号；警告（`TriangleAlert`）与错误（`CircleAlert`）从此分形分色。
+
 ## 运行
 
 ```bash
@@ -73,10 +83,17 @@ serde / serde_json / dirs
 ## 结构
 
 ```text
+build.rs           Windows 下把 assets/app.ico 编进 exe 资源（找不到 rc.exe 就跳过）
+assets/
+├─ brand.svg       应用图标源：全彩带底板，喂 .ico 与关于页
+├─ brand-mark.svg  应用内品牌标：同一枚 d，按 Lucide 描边语言重画（见「图标」）
+├─ app.ico         由 tools/make-icon.py 从 brand.svg 生成的 7 档图标
+└─ windows.rc      资源脚本：`1 ICON "app.ico"`
 src/
 ├─ lib.rs            库目标：让视图与测试共用同一份真实实现
-├─ main.rs           二进制入口：初始化、开库、绑键、建窗口
+├─ main.rs           二进制入口：初始化、注册资产源、开库、绑键、建窗口
 ├─ shell.rs          窗口外壳：标题栏 + 左侧导航 + 模块路由 + 状态栏
+├─ icon.rs           全局图标出口：AppIcon 语义 → Lucide 图形 + SVG 注册 + 品牌标
 ├─ fonts_view.rs     Fonts 模块（FontsModule + FontListDelegate + 对比视图）
 ├─ environment_view.rs  Environment 模块（变量表 / 分组主从 / 弹窗表单）
 ├─ env_model.rs      分层解析：谁覆盖谁、基线何时记录、停用恢复什么（纯逻辑）
@@ -87,7 +104,9 @@ src/
 ├─ fonts.rs          fontdb 扫描与 family/face 模型（不依赖 GPUI）
 └─ size_slider.rs    带预设刻度与松手吸附的字号滑杆
 examples/canvas_probe.rs 自绘画布探针：节点用 absolute div、连线用 canvas + PathBuilder
-tools/cap-window.ps1 用 PrintWindow 抓当前窗口，供 UI 走查
+tools/cap-window.ps1     用 PrintWindow 抓当前窗口，供 UI 走查
+tools/make-icon.py       从 brand.svg 生成 app.ico（Chrome 无头按真实像素光栅化）
+tools/probe-exe-icon.ps1 用 ExtractIconExW 验证图标确实进了 exe 资源
 ```
 
 状态所有权：
@@ -107,7 +126,13 @@ tools/cap-window.ps1 用 PrintWindow 抓当前窗口，供 UI 走查
 
 **标题栏里的控件要自己拦下鼠标按下。** Windows 把自绘标题栏的整条内容声明成 `HTCAPTION` 拖拽区：鼠标按下会交给系统窗口移动的模态循环，控件只收到按下、收不到抬起，`on_click` 永远不触发。所以标题栏里的抽屉按钮和主题开关都在自己的按下事件里 `stop_propagation()`（`shell::intercept_title_bar_press`），平台层就不会把这次按下交出去；其余空白区域仍然交给系统拖动。
 
-**图标只能用人家有的。** `gpui_component::IconName` 是 `gpui_kit_assets::IconName` 的子集（约 106 个），`Variable` / `FolderPlus` / `PencilLine` / `Trash` 都不在其中——环境变量模块用 `SquareTerminal`、`Folder`、`Replace`、`Delete`。
+**图标只用一个家族，语义名与图形名分开。** 见上面的「图标」。
+
+**`Assets::load` 未命中返回 `Err`，不是 `Ok(None)`。** 所以组合资产源时自定义源必须在前、默认包兜底；反过来写并用 `?` 串联，会让默认图标全部加载失败（实测表现为运行期 panic）。
+
+**`Icon` 是单色着色，多色 SVG 会被压成剪影。** `Icon::into_svg` 给 `svg()` 设了 `text_color`，GPUI 用 SVG 的 alpha 做蒙版再上色。因此应用内的品牌标必须是描边图形（`assets/brand-mark.svg`），带底板的全彩版（`assets/brand.svg`）只能用于 exe 图标——实测把全彩版放进标题栏会渲染成一个实心方块。
+
+**Windows 的窗口图标只能走资源编译。** `WindowOptions.icon` 标注 X11 only，GPUI 在 Windows 下也不暴露 HWND，所以运行期 `WM_SETICON` 这条路不通。做法是 `assets/app.ico` + `assets/windows.rc` + `build.rs` 调 Windows SDK 的 `rc.exe`；找不到 `rc.exe` 时跳过并留一条 `cargo:warning`，图标是观感项，不该让构建失败。
 
 **交互路径上的落盘只提交一次。** `Settings::save` 把十几条偏好收进一个事务（`DipswitchStore::set_settings`），库本身跑 WAL + `synchronous = NORMAL`。默认 journal 下逐条提交在 Windows 上要 ~50 ms，整组一个事务后是 ~3 ms——否则每次切模块、点收藏都在这上面卡一下。
 
@@ -141,7 +166,7 @@ env_event(id PK, at, detail)                             启用/停用/覆盖/�
 cargo fmt --check              通过
 cargo check --all-targets      通过
 cargo clippy --all-targets     0 warning
-cargo test                     44 passed + 1 ignored（真实注册表探针）
+cargo test                     47 passed + 1 ignored（真实注册表探针）
 cargo build --release          通过
 ```
 
@@ -152,6 +177,7 @@ cargo build --release          通过
 - **护栏**：被启用分组接管的 key 拒绝系统层直接编辑/删除，未接管的放行。
 - **存储层**：分组同名唯一、组内 key 唯一、跨组同名允许、级联删除、`enabled_seq` 递增与清空、值类型按注册表名存取、流水倒序与清空。
 - **偏好**：`Settings` 全字段往返 SQLite；空库回默认值；旧 JSON 能导入、坏 JSON 不炸且不落库。
+- **图标注册完整性**：每个 `AppIcon` 的图形都能从注册后的资产源取到真实 SVG 字节；`AppIcon::ALL` 覆盖全部变体，且没有两个语义图标意外共用同一图形。
 - **平台适配**：`REG_SZ` / `REG_EXPAND_SZ` / `REG_MULTI_SZ` 的字节级编解码往返（含 `%`、空格、分号），不支持的类型不会被当字符串读出。
 - **真实注册表探针**（`cargo test -- --ignored`）：写一个 `DIPSWITCH_SELFTEST_PROBE` 探针 key → 读回校验类型与值 → 确认当前进程可见 → 删除并确认清走。默认不跑，因为它真的会动 `HKCU\Environment` 并广播一次 `WM_SETTINGCHANGE`。
 

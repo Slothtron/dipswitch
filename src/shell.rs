@@ -13,7 +13,7 @@ use gpui_kit::{
     actions,
     base::StyledExt,
     component::{
-        ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode, TitleBar,
+        ActiveTheme, Icon, Sizable, Theme, ThemeMode, TitleBar,
         button::{Button, ButtonVariants},
         sidebar::{Sidebar, SidebarMenu, SidebarMenuItem},
         status_bar::StatusBar,
@@ -25,6 +25,7 @@ use gpui_kit::{
 use crate::{
     environment_view::EnvironmentModule,
     fonts_view::FontsModule,
+    icon::{AppIcon, brand},
     settings::{self, Settings},
 };
 
@@ -76,10 +77,10 @@ impl Module {
         }
     }
 
-    pub fn icon(self) -> IconName {
+    pub fn icon(self) -> AppIcon {
         match self {
-            Self::Fonts => IconName::ALargeSmall,
-            Self::Environment => IconName::SquareTerminal,
+            Self::Fonts => AppIcon::ModuleFonts,
+            Self::Environment => AppIcon::ModuleEnvironment,
         }
     }
 }
@@ -165,6 +166,8 @@ impl Dipswitch {
                 .flex_1()
                 .min_w_0()
                 .pr_2()
+                // 品牌标与 exe 图标同源（assets/brand.svg），标题栏与任务栏因此一致。
+                .child(brand().small())
                 // 标题栏整体是系统的 HTCAPTION 拖拽区：按下会被 WndProc 交给窗口
                 // 移动的模态循环，控件只能收到按下、收不到抬起，点击永远不触发。
                 // 控件在自己的按下事件里阻止冒泡，平台层就不会把这次按下交出去。
@@ -178,7 +181,7 @@ impl Dipswitch {
                             Button::new("toggle-navigation")
                                 .ghost()
                                 .small()
-                                .icon(IconName::PanelLeft)
+                                .icon(AppIcon::CollapseNavigation)
                                 .tooltip(if self.nav_collapsed {
                                     "Show navigation"
                                 } else {
@@ -282,7 +285,7 @@ impl Dipswitch {
                 .gap_2()
                 .text_sm()
                 .text_color(cx.theme().danger)
-                .child(Icon::new(IconName::CircleAlert).small())
+                .child(Icon::new(AppIcon::Error).small())
                 .child(message.clone())
                 .into_any_element(),
         )

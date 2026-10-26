@@ -1,0 +1,2 @@
+// 资源 ID 1 = exe 的主图标：Explorer 文件图标、任务栏与 Alt-Tab 都取它。
+1 ICON "app.ico"

@@ -18,7 +18,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Subscription, Task, Window, actions,
     base::StyledExt,
     component::{
-        ActiveTheme, Disableable, Icon, IconName, IndexPath, Selectable, Sizable, WindowExt,
+        ActiveTheme, Disableable, Icon, IndexPath, Selectable, Sizable, WindowExt,
         button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
         list::{List, ListDelegate, ListEvent, ListItem, ListState},
@@ -34,6 +34,7 @@ use gpui_kit::{
 
 use crate::{
     fonts::{self, FaceStyle, FontFace, FontFamily},
+    icon::AppIcon,
     settings::{self, LATIN_SAMPLE, PreviewBackground, SamplePreset, Settings},
     size_slider::SizeSlider,
 };
@@ -722,7 +723,7 @@ impl FontsModule {
                 Button::new("compare-toggle")
                     .ghost()
                     .small()
-                    .icon(IconName::LayoutDashboard)
+                    .icon(AppIcon::Compare)
                     .label(compare_label)
                     .selected(self.compare_open)
                     .disabled(self.compare.is_empty())
@@ -735,7 +736,7 @@ impl FontsModule {
                 Button::new("refresh-fonts")
                     .ghost()
                     .small()
-                    .icon(IconName::RefreshCw)
+                    .icon(AppIcon::Refresh)
                     .label("Rescan")
                     .loading(is_loading)
                     .disabled(is_loading)
@@ -783,7 +784,7 @@ impl FontsModule {
                     Input::new(&self.search_state)
                         .w_full()
                         .cleanable(true)
-                        .prefix(Icon::new(IconName::Search).small()),
+                        .prefix(Icon::new(AppIcon::Search).small()),
                 ),
             )
             .child(
@@ -884,7 +885,7 @@ impl FontsModule {
             .gap_3()
             .p_8()
             .child(
-                Icon::new(IconName::CircleAlert)
+                Icon::new(AppIcon::Error)
                     .size_8()
                     .text_color(cx.theme().danger),
             )
@@ -932,7 +933,7 @@ impl FontsModule {
             .justify_center()
             .gap_3()
             .child(
-                Icon::new(IconName::ALargeSmall)
+                Icon::new(AppIcon::TypeScale)
                     .size_12()
                     .text_color(cx.theme().muted_foreground.opacity(0.6)),
             )
@@ -1002,9 +1003,9 @@ impl FontsModule {
                             .ghost()
                             .small()
                             .icon(if is_favorite {
-                                IconName::StarFill
+                                AppIcon::FavoriteOn
                             } else {
-                                IconName::Star
+                                AppIcon::Favorite
                             })
                             .tooltip(if is_favorite {
                                 "Remove from favorites"
@@ -1026,7 +1027,7 @@ impl FontsModule {
                         Button::new("add-compare")
                             .ghost()
                             .small()
-                            .icon(IconName::Plus)
+                            .icon(AppIcon::Add)
                             .label(if in_compare { "In compare" } else { "Compare" })
                             .disabled(in_compare || compare_full)
                             .tooltip(if compare_full {
@@ -1094,7 +1095,7 @@ impl FontsModule {
                         Button::new("copy-font-name")
                             .primary()
                             .small()
-                            .icon(IconName::Copy)
+                            .icon(AppIcon::Copy)
                             .label("Copy name")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.copy_selected_family(window, cx);
@@ -1227,7 +1228,7 @@ impl FontsModule {
         Button::new("sample-presets")
             .ghost()
             .small()
-            .icon(IconName::CaseSensitive)
+            .icon(AppIcon::Samples)
             .label("Samples")
             .dropdown_menu({
                 let weak = cx.weak_entity();
@@ -1256,7 +1257,7 @@ impl FontsModule {
         Button::new("preview-surface")
             .ghost()
             .small()
-            .icon(IconName::Palette)
+            .icon(AppIcon::Surface)
             .label(self.preview_background.label())
             .dropdown_menu({
                 let weak = cx.weak_entity();
@@ -1482,7 +1483,7 @@ impl FontsModule {
                 Button::new("compare-add-selected")
                     .ghost()
                     .small()
-                    .icon(IconName::Plus)
+                    .icon(AppIcon::Add)
                     .label("Add selected")
                     .disabled(!can_add)
                     .tooltip(if can_add {
@@ -1531,7 +1532,7 @@ impl FontsModule {
                 .justify_center()
                 .gap_3()
                 .child(
-                    Icon::new(IconName::LayoutDashboard)
+                    Icon::new(AppIcon::Compare)
                         .size_10()
                         .text_color(cx.theme().muted_foreground.opacity(0.6)),
                 )
@@ -1634,7 +1635,7 @@ impl FontsModule {
                         Button::new(copy_id)
                             .ghost()
                             .small()
-                            .icon(IconName::Copy)
+                            .icon(AppIcon::Copy)
                             .tooltip("Copy name")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.copy_compare_entry(&copy_entry, window, cx);
@@ -1644,7 +1645,7 @@ impl FontsModule {
                         Button::new(remove_id)
                             .ghost()
                             .small()
-                            .icon(IconName::CircleX)
+                            .icon(AppIcon::Remove)
                             .tooltip("Remove from comparison")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.remove_compare_entry(&remove_key, cx);
@@ -1909,7 +1910,7 @@ impl ListDelegate for FontListDelegate {
                         )
                         .child(div().size_4().flex_shrink_0().when(is_favorite, |this| {
                             this.child(
-                                Icon::new(IconName::StarFill)
+                                Icon::new(AppIcon::FavoriteOn)
                                     .size_3()
                                     .text_color(cx.theme().primary),
                             )
@@ -1938,29 +1939,29 @@ impl ListDelegate for FontListDelegate {
     ) -> impl IntoElement {
         let (icon, title, detail) = if self.families.is_empty() {
             (
-                IconName::Inbox,
+                AppIcon::Empty,
                 "No fonts found",
                 "The system font directory appears to be empty.",
             )
         } else {
             match self.filter {
                 Filter::Favorites => (
-                    IconName::Star,
+                    AppIcon::Favorite,
                     "No favorites yet",
                     "Star a font to keep it here.",
                 ),
                 Filter::Recent => (
-                    IconName::RotateCw,
+                    AppIcon::Recent,
                     "No recent fonts",
                     "Fonts you open will appear here.",
                 ),
                 Filter::Monospace => (
-                    IconName::CaseSensitive,
+                    AppIcon::Monospace,
                     "No monospace fonts",
                     "No installed family is marked monospace.",
                 ),
                 Filter::All => (
-                    IconName::Search,
+                    AppIcon::NoResults,
                     "No matching fonts",
                     "Try a different family name.",
                 ),

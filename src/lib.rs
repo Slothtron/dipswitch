@@ -6,6 +6,7 @@
 //! 模块分工：
 //!
 //! - [`shell`]：窗口外壳（标题栏、左侧导航、状态栏）与模块路由；
+//! - [`icon`]：图标的语义出口，以及把用到的 SVG 注册进二进制；
 //! - [`fonts_view`] / [`environment_view`]：两个模块的界面；
 //! - [`env_model`] / [`env_service`] / [`system_env`]：环境变量分组的分层解析、
 //!   落地编排与平台适配，三层各自可测；
@@ -16,6 +17,7 @@ pub mod env_service;
 pub mod environment_view;
 pub mod fonts;
 pub mod fonts_view;
+pub mod icon;
 pub mod settings;
 pub mod shell;
 pub mod size_slider;
