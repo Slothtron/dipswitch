@@ -54,7 +54,7 @@
 - **改指向只动一行**：每个语义在 `AppIcon::target()` 里指向一个 `Target`——`Builtin(IconName)` 用 Lucide 图形，`Custom(&'static [u8])` 用应用自带的 SVG 字节（集中在 `icon::custom`）。以后想把 `Delete` 从内置垃圾桶换成自己画的形状，只改那一行，调用点和其余图标都不受影响。`AppIcon::Brand` 是当前唯一走 `Custom` 的变体，已经在标题栏渲染，所以这条通路不是纸面设计。
 - **不受组件层 106 个的限制**：`gpui_component::IconName` 只是 `gpui_kit_assets::IconName`（1,830 个）的兼容子集，而组件 API 收的是 `impl Into<Icon>`、`Icon` 对任何实现 `IconNamed` 的枚举有 blanket `From`——所以全量目录都能用。代价是共享枚举给出的是**路径**，默认包只嵌了那 106 个的字节，因此本应用用到的子集之外图形由 `icon_assets!` 点名嵌入（当前 10 个，约 +19 KiB）。
 - **漏登记会立刻失败**：`icon::tests::every_app_icon_resolves_to_real_svg` 逐个断言每个语义图标取得到真实 SVG 字节，两类指向都覆盖（内置的查注册后的资产源，自定义的查内嵌内容）。用了没登记的图形不会编译报错，只会在界面上画出一片空白，所以必须在测试里拦住。
-- **品牌标**：一枚字母 `d`，碗部是一格打到 ON 的开关。任务栏/文件图标用 `assets/brand.svg`（全彩带底板），应用内用 `assets/brand-mark.svg`（单色描边版，原因见「实现要点」）；后者经 `AppIcon::Brand` 进出，并有 `brand_mark_is_mask_safe_not_the_exe_tile` 拦住「把带底板的版本拿进应用内用」。
+- **品牌标**：一枚字母 `d`，碗部是一格打到 ON 的开关。任务栏/文件图标用 `assets/brand.svg`（全彩带底板），应用内用 `assets/brand-mark.svg`（单色描边版，原因见「实现要点」）；后者经 `AppIcon::Brand` 进出，并有 `custom_targets_are_mask_safe` 拦住「把带底板的版本拿进应用内用」。
 - 语义修正记录（第一轮）：`Compare` 由「仪表盘」改为两栏并排、`Recent` 由「顺时针箭头」改为时钟（原来与「重新扫描」撞形）、`Edit` 由「查找替换」改为铅笔、`Delete` 由「退格键」改为垃圾桶、`NewGroup` 由「文件夹」改为新建文件夹、`Environment` 由终端方块改为 `Variable`、警告（`TriangleAlert`）与错误（`CircleAlert`）分形分色。
 - 语义修正记录（第二轮，逐个图形对着真图审过）：`CollapseNavigation` 由「左侧面板」改为**按状态给方向**——展开态显示 `PanelLeftClose`、折叠态显示 `PanelLeftOpen`（新增 `ExpandNavigation` 语义），图标从此能预告点下去会发生什么；`More` 由横排三点改为 `EllipsisVertical`（它挂在横向排布的表格行上）；`Samples` 由「多语言」改为 `Quote`（下拉里是示例文本，Code/Numbers 不是语言）；`Add` 拆出 `AddToCompare` → `ListPlus`（「加入对比集合」与「新建变量」不是一回事）。
 - **`Monospace` 是第一个因「内置目录表达不出」而自绘的操作图标**：Lucide 里没有「等宽」的直译图形（`Braces` 表示代码、`SquareAsterisk` 与 `Binary` 都不对），所以画了 `assets/icon-mono.svg`——两个等宽字符格，左格放宽字符 M、右格放窄字符 `|`，格同宽即等宽。它经 `AppIcon::Monospace → Target::Custom` 进入，与品牌标共用同一张指向表。
@@ -136,7 +136,9 @@ examples/canvas_probe.rs 自绘画布探针：节点用 absolute div、连线用
 
 **`Assets::load` 未命中返回 `Err`，不是 `Ok(None)`。** 所以组合资产源时自定义源必须在前、默认包兜底；反过来写并用 `?` 串联，会让默认图标全部加载失败（实测表现为运行期 panic）。
 
-**`Icon` 是单色着色，多色 SVG 会被压成剪影。** `Icon::into_svg` 给 `svg()` 设了 `text_color`，GPUI 用 SVG 的 alpha 做蒙版再上色。因此应用内的品牌标必须是描边图形（`assets/brand-mark.svg`），带底板的全彩版（`assets/brand.svg`）只能用于 exe 图标——实测把全彩版放进标题栏会渲染成一个实心方块。
+**`Icon` 这条路只输出 alpha 蒙版，所以没有彩色图标。** 根因在渲染器而不是组件层：`gpui_component::Icon` → `svg()` 元素 → `window.render_svg` → `SvgRenderer::render_alpha_mask`，那个函数栅格化后只保留 `p.alpha()`，RGB 当场丢弃，再用一个前景色填充。设计动机是合理的——图标要跟主题走（浅/深/强调/禁用态共用一份文件），且蒙版是 1 字节/像素、比 RGBA 省 4 倍纹理，同一蒙版可换色重绘而不必重新栅格化；Lucide 整套 `stroke="currentColor"` 的线性图标正是为这个模型准备的。
+
+需要彩色时 GPUI 另有通路：`img()` 元素遇到 SVG 字节走的是 `render_single_frame` → `render_parsed`，返回完整 RGBA 的 `RenderImage`。代价是它不跟随主题色（深色模式要自己出第二版）、纹理 4 倍，而且不是 `Icon`，进不了 `Button::icon(...)` 这类只收 `impl Into<Icon>` 的槽位。所以本项目约定：**操作图标一律单色描边**（应用内品牌标也因此重画成 `assets/brand-mark.svg`，带底板的全彩版 `assets/brand.svg` 只用于 exe 图标——实测放进标题栏会渲染成一个实心方块）；真要彩色，走 `img()`，不要塞进 `AppIcon` 指向表。
 
 **Windows 的窗口图标只能走资源编译。** `WindowOptions.icon` 标注 X11 only，GPUI 在 Windows 下也不暴露 HWND，所以运行期 `WM_SETICON` 这条路不通。做法照搬 Zed 的 `crates/windows_resources`：`build.rs` 在 `OUT_DIR` 里**生成** `.rc`（`#pragma code_page(65001)` + `1 ICON` + `VERSIONINFO`），交给 `embed-resource` 编译。它自带 `KitsRoot10` → `vswhom` → `PATH` 的 `rc.exe` 发现链，支持 GNU 工具链走 `windres`，并认 `RC` / `RC_<target>` 覆盖；顺带把版本信息也写进文件属性。两点与 Zed 有意不同：**不写 manifest 行**——`gpui-pre` 自己的 build.rs 已经嵌了 `1 RT_MANIFEST`（实测产物含 `dpiAware`），再来一份同 ID 同类型就是自相冲突；**失败降级成 `cargo:warning`** 而不是 `unwrap()`——图标是观感项，缺 SDK 时也该构建出可用的 exe。
 

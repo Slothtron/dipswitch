@@ -21,7 +21,7 @@
 //!
 //! 风格统一靠「只用 Lucide」：全部图形同为 24×24 网格、2px 描边、圆头端点；组件自带
 //! 的窗口按钮（最小化/最大化/关闭）也是 Lucide，不需要额外对齐。自定义图形要守同一套
-//! 语言，因为 `Icon` 走 alpha 蒙版单色着色——`brand_mark_is_mask_safe_not_the_exe_tile`
+//! 语言，因为 `Icon` 走 alpha 蒙版单色着色——`custom_targets_are_mask_safe`
 //! 就是拦「把带底板的全彩 exe 图标直接拿进应用内用」的。
 
 use gpui_kit::AssetSource;
