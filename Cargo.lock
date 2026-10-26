@@ -1245,6 +1245,7 @@ name = "dipswitch"
 version = "0.3.0"
 dependencies = [
  "dirs 7.0.0",
+ "embed-resource",
  "fontdb 0.24.0",
  "gpui-kit",
  "rusqlite",

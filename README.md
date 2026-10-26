@@ -78,17 +78,20 @@ rusqlite 0.40 (bundled)  ← 本地配置库
 winreg 0.56              ← HKCU\Environment 读写（仅 Windows）
 windows-sys 0.60         ← WM_SETTINGCHANGE 广播（仅 Windows）
 serde / serde_json / dirs
+
+# 仅 Windows 的 build-dependency
+embed-resource 3.0.12    ← 编译 .rc 进 exe（图标 + 版本信息）；gpui-pre 本来就依赖它，
+                           所以依赖树里没有任何新增 crate
 ```
 
 ## 结构
 
 ```text
-build.rs           Windows 下把 assets/app.ico 编进 exe 资源（找不到 rc.exe 就跳过）
+build.rs           Windows 下生成 .rc 并编进 exe 资源：图标 + 版本信息（与 Zed 同款做法）
 assets/
-├─ brand.svg       应用图标源：全彩带底板，喂 .ico 与关于页
+├─ brand.svg       应用图标源：全彩带底板，喂 .ico
 ├─ brand-mark.svg  应用内品牌标：同一枚 d，按 Lucide 描边语言重画（见「图标」）
-├─ app.ico         由 tools/make-icon.py 从 brand.svg 生成的 7 档图标
-└─ windows.rc      资源脚本：`1 ICON "app.ico"`
+└─ app.ico         由 tools/make-icon.py 从 brand.svg 生成的 7 档图标，作为产物提交进仓库
 src/
 ├─ lib.rs            库目标：让视图与测试共用同一份真实实现
 ├─ main.rs           二进制入口：初始化、注册资产源、开库、绑键、建窗口
@@ -132,9 +135,9 @@ tools/probe-exe-icon.ps1 用 ExtractIconExW 验证图标确实进了 exe 资源
 
 **`Icon` 是单色着色，多色 SVG 会被压成剪影。** `Icon::into_svg` 给 `svg()` 设了 `text_color`，GPUI 用 SVG 的 alpha 做蒙版再上色。因此应用内的品牌标必须是描边图形（`assets/brand-mark.svg`），带底板的全彩版（`assets/brand.svg`）只能用于 exe 图标——实测把全彩版放进标题栏会渲染成一个实心方块。
 
-**Windows 的窗口图标只能走资源编译。** `WindowOptions.icon` 标注 X11 only，GPUI 在 Windows 下也不暴露 HWND，所以运行期 `WM_SETICON` 这条路不通。做法是 `assets/app.ico` + `assets/windows.rc` + `build.rs` 调 Windows SDK 的 `rc.exe`；找不到 `rc.exe` 时跳过并留一条 `cargo:warning`，图标是观感项，不该让构建失败。
+**Windows 的窗口图标只能走资源编译。** `WindowOptions.icon` 标注 X11 only，GPUI 在 Windows 下也不暴露 HWND，所以运行期 `WM_SETICON` 这条路不通。做法照搬 Zed 的 `crates/windows_resources`：`build.rs` 在 `OUT_DIR` 里**生成** `.rc`（`#pragma code_page(65001)` + `1 ICON` + `VERSIONINFO`），交给 `embed-resource` 编译。它自带 `KitsRoot10` → `vswhom` → `PATH` 的 `rc.exe` 发现链，支持 GNU 工具链走 `windres`，并认 `RC` / `RC_<target>` 覆盖；顺带把版本信息也写进文件属性。两点与 Zed 有意不同：**不写 manifest 行**——`gpui-pre` 自己的 build.rs 已经嵌了 `1 RT_MANIFEST`（实测产物含 `dpiAware`），再来一份同 ID 同类型就是自相冲突；**失败降级成 `cargo:warning`** 而不是 `unwrap()`——图标是观感项，缺 SDK 时也该构建出可用的 exe。
 
-**资源生成不属于构建。** `build.rs` 只**消费**已提交的 `app.ico`，不生成它——生成是维护者的显式步骤（`python tools/make-icon.py`）。把生成塞进构建等于让构建依赖 Python 加一个 SVG 光栅器，与「离线构建」的验收项冲突。代价是一条纪律：**改了 `assets/brand.svg` 必须重跑该脚本**，否则 exe 里还是旧图标而构建不会报错。两处外部定位都不写死机器专属路径：`rc.exe` 按 `DIPSWITCH_RC` → `WindowsSdkDir` → 注册表 `KitsRoot10` → `PATH` 依次查找（普通 shell 里 `WindowsSdkDir` 通常不存在，注册表才是可靠来源）；光栅器按 `DIPSWITCH_RASTERIZER` → `rsvg-convert` → PATH 上的 Chrome/Edge → 平台标准安装位置查找。
+**资源生成不属于构建。** `build.rs` 只**消费**已提交的 `app.ico`，不生成它——生成是维护者的显式步骤（`python tools/make-icon.py`）。把生成塞进构建等于让构建依赖 Python 加一个 SVG 光栅器，与「离线构建」的验收项冲突。代价是一条纪律：**改了 `assets/brand.svg` 必须重跑该脚本**，否则 exe 里还是旧图标而构建不会报错。该脚本自身也不写死机器专属路径：光栅器按 `DIPSWITCH_RASTERIZER` → `rsvg-convert` → PATH 上的 Chrome/Edge → 平台标准安装位置查找（它刻意不尝试 `convert`——Windows 上那是 FAT 转 NTFS 的磁盘工具，不是 ImageMagick）。
 
 **交互路径上的落盘只提交一次。** `Settings::save` 把十几条偏好收进一个事务（`DipswitchStore::set_settings`），库本身跑 WAL + `synchronous = NORMAL`。默认 journal 下逐条提交在 Windows 上要 ~50 ms，整组一个事务后是 ~3 ms——否则每次切模块、点收藏都在这上面卡一下。
 

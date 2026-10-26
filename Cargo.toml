@@ -29,6 +29,11 @@ windows-sys = { version = "0.60", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+# exe 图标与版本信息：build.rs 生成 .rc 后交给它编译（与 Zed 的 windows_resources 同一做法）。
+# 它自带 KitsRoot10 → vswhom → PATH 的 rc.exe 发现链，并认 RC / RC_<target> 覆盖。
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0"
+
 # GPUI 的绘制与布局在未优化构建下明显发滞：依赖按 O2 编译，
 # 本 crate 用 O1 兼顾响应速度与可调试性（debug 断言仍然开启）。
 [profile.dev]

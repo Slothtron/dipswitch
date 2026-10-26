@@ -1,153 +1,112 @@
-//! Windows 下把 `assets/app.ico` 编进 exe 资源，让 Explorer、任务栏与 Alt-Tab
-//! 显示应用自己的图标。
+//! Windows 下把应用图标与版本信息编进 exe 资源，让 Explorer、任务栏、Alt-Tab 与
+//! 文件属性对话框显示应用自己的信息。
 //!
-//! 边界：本脚本**只消费**已生成的 `app.ico`，不参与任何静态资源的生成——生成是
-//! 维护者的显式步骤（`python tools/make-icon.py`），不进构建，否则构建就会依赖
-//! Python 与一个 SVG 光栅器，与「离线构建」的验收项冲突。
+//! 做法照搬 Zed 的 `crates/windows_resources`：build 期在 `OUT_DIR` 里**生成** `.rc`
+//! （不提交手写 `.rc`），再用 `embed-resource` 编译。选它而不是自己找 `rc.exe` 的
+//! 理由很实际：它已经实现了 `KitsRoot10` 注册表 → `vswhom` → `PATH` 的发现链，
+//! 支持 GNU 工具链走 `windres`，并且认 `RC` / `RC_<target>` 环境变量做覆盖。
 //!
-//! 为什么走 `rc.exe` 而不是 `embed-resource`：多引一个构建依赖就要多赌一次 crates
-//! 缓存；而 `rc.exe` 与 MSVC 工具链同属 Windows SDK（SQLite 的 `bundled` 已经依赖
-//! 这套）。
+//! 两处刻意与 Zed 不同，都写在下面对应位置：
+//! 1. **不写 manifest 行**——`gpui-pre` 自己的 build.rs 已经嵌了 `1 RT_MANIFEST`
+//!    （实测产物里有 `dpiAware`），再来一份同 ID 同类型的资源就是自相冲突；
+//! 2. **失败不 panic**——Zed 用 `.unwrap()`，因为图标对它是发布要求；本项目把图标
+//!    当观感项，缺 SDK 时应该照常构建出可用的 exe，所以降级成 `cargo:warning`。
 //!
-//! 图标是观感项，不该让构建失败：找不到 `rc.exe` 或缺 `.ico` 时跳过并留一条
-//! warning，产物仍然可用，只是没有自定义图标。
+//! 边界：本脚本只**消费**已生成的 `assets/app.ico`，不参与资源生成。生成是维护者的
+//! 显式步骤（`python tools/make-icon.py`），否则构建就要依赖 Python 加一个 SVG
+//! 光栅器，与「离线构建」的验收项冲突。改了 `assets/brand.svg` 必须重跑该脚本。
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
-const RC_SOURCE: &str = "assets/windows.rc";
 const ICO_SOURCE: &str = "assets/app.ico";
 
 fn main() {
-    println!("cargo:rerun-if-changed={RC_SOURCE}");
     println!("cargo:rerun-if-changed={ICO_SOURCE}");
     println!("cargo:rerun-if-changed=build.rs");
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("由 cargo 提供"));
-    let rc = manifest.join(RC_SOURCE);
-    if !rc.is_file() || !manifest.join(ICO_SOURCE).is_file() {
-        println!(
-            "cargo:warning=缺少 {ICO_SOURCE}，跳过 exe 图标（先跑 python tools/make-icon.py）"
-        );
-        return;
-    }
-    let Some(compiler) = find_rc() else {
-        println!(
-            "cargo:warning=找不到 Windows SDK 的 rc.exe，跳过 exe 图标。\
-             设 DIPSWITCH_RC 指向 rc.exe，或安装 Windows 10/11 SDK"
-        );
-        return;
-    };
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("由 cargo 提供"));
-    let resource = out_dir.join("app.res");
-    match compile_icon(&compiler, &rc, &resource) {
-        Ok(()) => {
-            // link.exe 接受 .res 作为输入，把它交给二进制目标即可。
-            println!("cargo:rustc-link-arg-bins={}", resource.display());
-        }
-        Err(message) => println!("cargo:warning=编译图标资源失败：{message}"),
+    match embed() {
+        Ok(()) => {}
+        Err(message) => println!("cargo:warning=未能嵌入 exe 资源（图标与版本信息）：{message}"),
     }
 }
 
-/// 定位 `rc.exe`，不写死任何机器专属路径。顺序：
-/// 1. `DIPSWITCH_RC` —— 显式指定，CI 与非标准安装用；
-/// 2. `WindowsSdkDir` —— 只在 Developer Command Prompt 里存在；
-/// 3. 注册表 `KitsRoot10` —— SDK 安装时写入，普通 shell 下唯一可靠的来源；
-/// 4. `PATH`。
-fn find_rc() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("DIPSWITCH_RC") {
-        let path = PathBuf::from(explicit);
-        if path.is_file() {
-            return Some(path);
-        }
+fn embed() -> Result<(), String> {
+    let manifest = PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").map_err(|_| "缺 CARGO_MANIFEST_DIR".to_string())?,
+    );
+    let icon = manifest.join(ICO_SOURCE);
+    if !icon.is_file() {
+        return Err(format!("缺少 {ICO_SOURCE}，先跑 python tools/make-icon.py"));
     }
-    for root in sdk_roots() {
-        if let Some(found) = newest_rc_under(&root.join("bin")) {
-            return Some(found);
-        }
-    }
-    Some(PathBuf::from("rc.exe"))
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").map_err(|_| "缺 OUT_DIR".to_string())?);
+
+    // rc.exe 默认按 ANSI 代码页解码 .rc；仓库路径含非 ASCII 字符时它会找不到被引用的
+    // 文件。声明 UTF-8 代码页，与 Zed 同一处理。
+    let rc_path = out_dir.join("dipswitch.rc");
+    std::fs::write(&rc_path, rc_file(&icon)).map_err(|error| error.to_string())?;
+
+    embed_resource::compile(&rc_path, embed_resource::NONE)
+        .manifest_optional()
+        .map_err(|failure| format!("{failure:?}"))
 }
 
-fn sdk_roots() -> impl Iterator<Item = PathBuf> {
-    let from_env = std::env::var_os("WindowsSdkDir").map(PathBuf::from);
-    let from_registry = registry_kits_root();
-    from_env.into_iter().chain(from_registry)
+/// 生成 `.rc` 内容。路径里的反斜杠要双写，否则在 rc 的字符串字面量里成了转义。
+fn rc_file(icon: &std::path::Path) -> String {
+    let icon_escaped = icon.to_string_lossy().replace('\\', "\\\\");
+    let version = pkg_version();
+    let numeric = file_version(&version);
+    format!(
+        r#"#pragma code_page(65001)
+1 ICON "{icon_escaped}"
+
+1 VERSIONINFO
+FILEVERSION {numeric}
+PRODUCTVERSION {numeric}
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription", "dipswitch\0"
+            VALUE "FileVersion", "{version}\0"
+            VALUE "ProductName", "dipswitch\0"
+            VALUE "ProductVersion", "{version}\0"
+            VALUE "LegalCopyright", "Copyright 2026 Slothtron\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
+"#
+    )
 }
 
-/// `HKLM\...\Windows Kits\Installed Roots` 的 `KitsRoot10`。64 位系统上 SDK 键
-/// 落在 WOW6432Node 视图下，两个都试。
-fn registry_kits_root() -> Option<PathBuf> {
-    const KEYS: [&str; 2] = [
-        r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots",
-        r"HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots",
-    ];
-    for key in KEYS {
-        let Ok(output) = Command::new("reg")
-            .args(["query", key, "/v", "KitsRoot10"])
-            .output()
-        else {
-            continue;
-        };
-        if !output.status.success() {
-            continue;
-        }
-        // 输出是 `KitsRoot10    REG_SZ    C:\...\10\`，按 REG_SZ 切分取尾部；
-        // 这样不受控制台代码页影响（值本身是 ASCII 路径）。
-        let text = String::from_utf8_lossy(&output.stdout);
-        if let Some(root) = text
-            .lines()
-            .find_map(|line| line.split_once("REG_SZ"))
-            .map(|(_, value)| value.trim().trim_end_matches(['\\', '"']))
-            .filter(|value| !value.is_empty())
-        {
-            let path = PathBuf::from(root);
-            if path.is_dir() {
-                return Some(path);
-            }
-        }
-    }
-    None
+fn pkg_version() -> String {
+    std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_string())
 }
 
-/// SDK 的 `bin` 下会并存多个版本目录，取最高的那个里的 `x64\rc.exe`。
-fn newest_rc_under(bin: &Path) -> Option<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(bin) else {
-        return None;
-    };
-    let mut versions: Vec<String> = entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| name.ends_with(".0"))
+/// `0.3.0` → `0,3,0,0`：VERSIONINFO 要四段 16 位整数，缺的补零。
+fn file_version(version: &str) -> String {
+    let parts: Vec<u16> = version
+        .split('.')
+        .take(4)
+        .map(|part| part.parse::<u16>().unwrap_or(0))
+        .chain(std::iter::repeat(0))
+        .take(4)
         .collect();
-    // 版本号是点分数，按段做数值比较，避免 10.0.99 排在 10.0.22621 之后。
-    versions.sort_by_key(|version| {
-        version
-            .split('.')
-            .map(|part| part.parse::<u32>().unwrap_or(0))
-            .collect::<Vec<_>>()
-    });
-    versions
+    parts
         .iter()
-        .rev()
-        .map(|version| bin.join(version).join("x64").join("rc.exe"))
-        .find(|candidate| candidate.is_file())
-}
-
-fn compile_icon(compiler: &Path, rc: &Path, resource: &Path) -> Result<(), String> {
-    let output = Command::new(compiler)
-        .arg("/nologo")
-        .arg("/fo")
-        .arg(resource)
-        .arg(rc)
-        .output()
-        .map_err(|error| format!("无法启动 {}: {error}", compiler.display()))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).into_owned())
-    }
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
