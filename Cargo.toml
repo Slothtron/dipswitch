@@ -1,0 +1,39 @@
+[package]
+name = "dipswitch"
+version = "0.3.0"
+edition = "2024"
+publish = false
+description = "A personal desktop console built with GPUI Kit: installed-font browser plus user-level environment variable profiles"
+license = "MIT"
+
+[dependencies]
+# 一个依赖拿到 GPUI + base + component + 默认图标（0.8 对应 gpui-pre 0.3.9）
+gpui-kit = "0.8"
+
+# 只做系统字体枚举：纯 Rust 解析字体表，跨平台（Windows / macOS / Linux）
+fontdb = "0.24"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "7"
+
+# 本地配置库：主题/预览偏好与环境变量分组都存在这里
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+
+[target.'cfg(windows)'.dependencies]
+# 用户级环境变量读写（HKCU\Environment）
+winreg = "0.56"
+# 只需要 WM_SETTINGCHANGE 广播
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# GPUI 的绘制与布局在未优化构建下明显发滞：依赖按 O2 编译，
+# 本 crate 用 O1 兼顾响应速度与可调试性（debug 断言仍然开启）。
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
