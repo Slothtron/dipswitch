@@ -182,7 +182,12 @@ impl Dipswitch {
                             Button::new("toggle-navigation")
                                 .ghost()
                                 .small()
-                                .icon(AppIcon::CollapseNavigation)
+                                // 图标跟着状态走：折叠态给「展开」方向，反之亦然。
+                                .icon(if self.nav_collapsed {
+                                    AppIcon::ExpandNavigation
+                                } else {
+                                    AppIcon::CollapseNavigation
+                                })
                                 .tooltip(if self.nav_collapsed {
                                     "Show navigation"
                                 } else {

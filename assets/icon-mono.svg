@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="monospace">
+  <!-- 等宽 = 每个字符占同一个格。左格放宽字符（M），右格放窄字符（|），两格同宽。
+       Lucide 目录里没有「等宽」的直译图形（Braces 表示代码、Binary/SquareAsterisk
+       都不对），所以自绘一枚，语言沿用同族：24 网格、圆头端点、描边不填充。 -->
+  <rect x="2.5" y="5.5" width="8" height="13" rx="2"/>
+  <rect x="13.5" y="5.5" width="8" height="13" rx="2"/>
+  <path d="M5 15V9.5l1.5 2.2 1.5-2.2V15"/>
+  <path d="M17.5 9.5V15"/>
+</svg>

@@ -1027,7 +1027,7 @@ impl FontsModule {
                         Button::new("add-compare")
                             .ghost()
                             .small()
-                            .icon(AppIcon::Add)
+                            .icon(AppIcon::AddToCompare)
                             .label(if in_compare { "In compare" } else { "Compare" })
                             .disabled(in_compare || compare_full)
                             .tooltip(if compare_full {
@@ -1483,7 +1483,7 @@ impl FontsModule {
                 Button::new("compare-add-selected")
                     .ghost()
                     .small()
-                    .icon(AppIcon::Add)
+                    .icon(AppIcon::AddToCompare)
                     .label("Add selected")
                     .disabled(!can_add)
                     .tooltip(if can_add {

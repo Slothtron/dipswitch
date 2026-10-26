@@ -55,7 +55,9 @@
 - **不受组件层 106 个的限制**：`gpui_component::IconName` 只是 `gpui_kit_assets::IconName`（1,830 个）的兼容子集，而组件 API 收的是 `impl Into<Icon>`、`Icon` 对任何实现 `IconNamed` 的枚举有 blanket `From`——所以全量目录都能用。代价是共享枚举给出的是**路径**，默认包只嵌了那 106 个的字节，因此本应用用到的子集之外图形由 `icon_assets!` 点名嵌入（当前 10 个，约 +19 KiB）。
 - **漏登记会立刻失败**：`icon::tests::every_app_icon_resolves_to_real_svg` 逐个断言每个语义图标取得到真实 SVG 字节，两类指向都覆盖（内置的查注册后的资产源，自定义的查内嵌内容）。用了没登记的图形不会编译报错，只会在界面上画出一片空白，所以必须在测试里拦住。
 - **品牌标**：一枚字母 `d`，碗部是一格打到 ON 的开关。任务栏/文件图标用 `assets/brand.svg`（全彩带底板），应用内用 `assets/brand-mark.svg`（单色描边版，原因见「实现要点」）；后者经 `AppIcon::Brand` 进出，并有 `brand_mark_is_mask_safe_not_the_exe_tile` 拦住「把带底板的版本拿进应用内用」。
-- 语义修正记录：`Compare` 由「仪表盘」改为两栏并排、`Recent` 由「顺时针箭头」改为时钟（原来与「重新扫描」撞形）、`Edit` 由「查找替换」改为铅笔、`Delete` 由「退格键」改为垃圾桶、`NewGroup` 由「文件夹」改为新建文件夹、`Environment` 由终端方块改为 `Variable`、`Monospace` 由「大小写」改为花括号；警告（`TriangleAlert`）与错误（`CircleAlert`）从此分形分色。
+- 语义修正记录（第一轮）：`Compare` 由「仪表盘」改为两栏并排、`Recent` 由「顺时针箭头」改为时钟（原来与「重新扫描」撞形）、`Edit` 由「查找替换」改为铅笔、`Delete` 由「退格键」改为垃圾桶、`NewGroup` 由「文件夹」改为新建文件夹、`Environment` 由终端方块改为 `Variable`、警告（`TriangleAlert`）与错误（`CircleAlert`）分形分色。
+- 语义修正记录（第二轮，逐个图形对着真图审过）：`CollapseNavigation` 由「左侧面板」改为**按状态给方向**——展开态显示 `PanelLeftClose`、折叠态显示 `PanelLeftOpen`（新增 `ExpandNavigation` 语义），图标从此能预告点下去会发生什么；`More` 由横排三点改为 `EllipsisVertical`（它挂在横向排布的表格行上）；`Samples` 由「多语言」改为 `Quote`（下拉里是示例文本，Code/Numbers 不是语言）；`Add` 拆出 `AddToCompare` → `ListPlus`（「加入对比集合」与「新建变量」不是一回事）。
+- **`Monospace` 是第一个因「内置目录表达不出」而自绘的操作图标**：Lucide 里没有「等宽」的直译图形（`Braces` 表示代码、`SquareAsterisk` 与 `Binary` 都不对），所以画了 `assets/icon-mono.svg`——两个等宽字符格，左格放宽字符 M、右格放窄字符 `|`，格同宽即等宽。它经 `AppIcon::Monospace → Target::Custom` 进入，与品牌标共用同一张指向表。
 
 ## 运行
 
@@ -92,6 +94,7 @@ build.rs           Windows 下生成 .rc 并编进 exe 资源：图标 + 版本�
 assets/
 ├─ brand.svg       应用图标源：全彩带底板，喂 .ico
 ├─ brand-mark.svg  应用内品牌标：同一枚 d，按 Lucide 描边语言重画（见「图标」）
+├─ icon-mono.svg   自绘的等宽标记：Lucide 目录里没有「等宽」的直译图形
 └─ app.ico         提前生成好、随仓库同步的 7 档图标（16/24/32/48/64/128/256）
 src/
 ├─ lib.rs            库目标：让视图与测试共用同一份真实实现

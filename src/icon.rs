@@ -29,10 +29,12 @@ use gpui_kit::assets::{Assets, IconName};
 use gpui_kit::component::Icon;
 
 // 子集之外、本应用用到的图形。加图标时这里必须同步，否则下面的注册完整性测试会红。
+// 反例：EllipsisVertical / PanelLeftClose / PanelLeftOpen 已经在默认那 106 个里，
+// 重复列进来只会白占体积。
 gpui_kit::assets::icon_assets!(
     ExtraIcons,
     [
-        Braces, Clock, Columns2, FolderPlus, Languages, Pencil, SearchX, Trash, Type, Variable
+        Clock, Columns2, FolderPlus, ListPlus, Pencil, Quote, SearchX, Trash, Type, Variable
     ]
 );
 
@@ -66,9 +68,13 @@ pub enum AppIcon {
     // 目的地与外壳
     ModuleFonts,
     ModuleEnvironment,
+    // 导航的折叠与展开是两个动作，所以是两个语义——图标要能预告点下去的结果。
     CollapseNavigation,
+    ExpandNavigation,
     // 通用操作
     Add,
+    /// 把当前字体加进对比集合：是「追加到列表」，不是「新建一个东西」。
+    AddToCompare,
     Refresh,
     Search,
     NoResults,
@@ -102,7 +108,9 @@ impl AppIcon {
         AppIcon::ModuleFonts,
         AppIcon::ModuleEnvironment,
         AppIcon::CollapseNavigation,
+        AppIcon::ExpandNavigation,
         AppIcon::Add,
+        AppIcon::AddToCompare,
         AppIcon::Refresh,
         AppIcon::Search,
         AppIcon::NoResults,
@@ -135,9 +143,12 @@ impl AppIcon {
             // 目的地用领域符号，不用泛化的面板图标。
             Self::ModuleFonts => Target::Builtin(IconName::Type),
             Self::ModuleEnvironment => Target::Builtin(IconName::Variable),
-            Self::CollapseNavigation => Target::Builtin(IconName::PanelLeft),
+            // 图标要预告点下去会发生什么：折叠态与展开态是两个动作，给两个方向。
+            Self::CollapseNavigation => Target::Builtin(IconName::PanelLeftClose),
+            Self::ExpandNavigation => Target::Builtin(IconName::PanelLeftOpen),
             // 通用操作。
             Self::Add => Target::Builtin(IconName::Plus),
+            Self::AddToCompare => Target::Builtin(IconName::ListPlus),
             Self::Refresh => Target::Builtin(IconName::RefreshCw),
             Self::Search => Target::Builtin(IconName::Search),
             // 「搜了但没命中」和「搜索框」要能区分开。
@@ -149,7 +160,8 @@ impl AppIcon {
             Self::Delete => Target::Builtin(IconName::Trash),
             // 从对比集合里移出一项，不是删数据，所以用圈叉而不是垃圾桶。
             Self::Remove => Target::Builtin(IconName::CircleX),
-            Self::More => Target::Builtin(IconName::Ellipsis),
+            // 行菜单挂在横向排布的表格行上，用竖排三点才不与「行」抢方向。
+            Self::More => Target::Builtin(IconName::EllipsisVertical),
             // 新建分组原来是 Folder，和「分组」这个概念对不上。
             Self::NewGroup => Target::Builtin(IconName::FolderPlus),
             Self::Compare => Target::Builtin(IconName::Columns2),
@@ -157,10 +169,12 @@ impl AppIcon {
             Self::FavoriteOn => Target::Builtin(IconName::StarFill),
             // 最近使用用时钟，原来的 RotateCw 与「重新扫描」撞形。
             Self::Recent => Target::Builtin(IconName::Clock),
-            // 等宽字体用花括号（代码字形），原来的 CaseSensitive 表示大小写。
-            Self::Monospace => Target::Builtin(IconName::Braces),
-            // 示例文本预设覆盖 Latin/中文/Code/Numbers，用多语言符号。
-            Self::Samples => Target::Builtin(IconName::Languages),
+            // 等宽：Lucide 目录里没有直译图形（Braces 表示"代码"、SquareAsterisk 与
+            // Binary 都不对），所以自绘一枚——两个等宽字符格，左格放宽字符 M、右格放
+            // 窄字符 |，格同宽即等宽。这是「内置不够用就切自定义」的实例。
+            Self::Monospace => Target::Custom(custom::MONO),
+            // 示例文本预设覆盖 Latin/中文/Code/Numbers，是"引例"不是"多语言切换"。
+            Self::Samples => Target::Builtin(IconName::Quote),
             Self::Surface => Target::Builtin(IconName::Palette),
             Self::TypeScale => Target::Builtin(IconName::ALargeSmall),
             // 警告（可继续但有后果）与错误（已经做不到）分形、分色。
@@ -199,6 +213,11 @@ pub mod custom {
     /// GPUI 的 `Icon` 用 alpha 蒙版着色，带底板的全彩版在标题栏会被压成实心方块。
     /// 两份文件是「同一形状、两种渲染语境」，改形状要同时改两处并重出 `.ico`。
     pub const BRAND: &[u8] = include_bytes!("../assets/brand-mark.svg");
+
+    /// 等宽标记：目录里没有能表达「等宽」的图形（`Braces` 表示代码、`SquareAsterisk`
+    /// 与 `Binary` 都不对），所以自绘。语言仍守同族规范——24 网格、圆头端点、
+    /// 描边不填充、颜色走 `currentColor`。
+    pub const MONO: &[u8] = include_bytes!("../assets/icon-mono.svg");
 }
 
 /// 让 `AppIcon` 直接出现在任何收 `impl Into<Icon>` 的位置上——`Button::icon`、
@@ -241,7 +260,7 @@ mod tests {
     /// ALL 必须覆盖每个变体；内置图形之间不允许同形不同义（要重复得有意识地确认）。
     #[test]
     fn all_lists_every_variant_and_builtin_shapes_are_distinct() {
-        assert_eq!(AppIcon::ALL.len(), 25, "增删 AppIcon 变体时同步这条断言");
+        assert_eq!(AppIcon::ALL.len(), 27, "增删 AppIcon 变体时同步这条断言");
         let mut paths: Vec<String> = AppIcon::ALL
             .iter()
             .filter_map(|icon| match icon.target() {
@@ -255,24 +274,36 @@ mod tests {
         assert_eq!(paths.len(), total, "两个语义图标共用了同一个内置图形");
     }
 
-    /// 品牌标必须**描边 + currentColor、不带底板**：`Icon` 走 alpha 蒙版单色着色，
-    /// 实测把带 `#10141A` 底板的全彩版放进标题栏会渲染成一个实心方块。这条断言就是
-    /// 防止有人把 exe 图标那份直接拿进应用内用。
+    /// 自定义图形必须**描边 + `currentColor`、不带实心底板**：`Icon` 走 alpha 蒙版
+    /// 单色着色，实测把带 `#10141A` 底板的全彩版放进标题栏会渲染成一个实心方块。
+    /// 这条断言覆盖所有 `Target::Custom`，防止有人把 exe 图标那份直接拿进应用内用。
     #[test]
-    fn brand_mark_is_mask_safe_not_the_exe_tile() {
-        let mark = std::str::from_utf8(custom::BRAND).expect("品牌标要是合法 UTF-8");
+    fn custom_targets_are_mask_safe() {
+        let mut checked = 0;
+        for icon in AppIcon::ALL {
+            let Target::Custom(bytes) = icon.target() else {
+                continue;
+            };
+            let svg = std::str::from_utf8(bytes)
+                .unwrap_or_else(|error| panic!("{icon:?} 的自定义图形不是合法 UTF-8：{error}"));
+            checked += 1;
+            assert!(
+                svg.contains("viewBox=\"0 0 24 24\""),
+                "{icon:?} 要用 Lucide 的 24 网格"
+            );
+            assert!(
+                svg.contains("stroke=\"currentColor\""),
+                "{icon:?} 要跟随前景色"
+            );
+            assert!(svg.contains("fill=\"none\""), "{icon:?} 不能带实心填充");
+            assert!(
+                !svg.contains("#10141A"),
+                "{icon:?} 带了 exe 图标的底板色——它在 Icon 里会被压成实心方块"
+            );
+        }
         assert!(
-            mark.contains("viewBox=\"0 0 24 24\""),
-            "品牌标要用 Lucide 的 24 网格"
-        );
-        assert!(
-            mark.contains("stroke=\"currentColor\""),
-            "品牌标要跟随前景色"
-        );
-        assert!(mark.contains("fill=\"none\""), "品牌标不能带实心填充");
-        assert!(
-            !mark.contains("#10141A"),
-            "品牌标带了 exe 图标的底板色——它在 Icon 里会被压成实心方块"
+            checked >= 2,
+            "品牌标与等宽标都该走 Custom，实际只有 {checked}"
         );
     }
 }
