@@ -25,8 +25,9 @@
 //! 就是拦「把带底板的全彩 exe 图标直接拿进应用内用」的。
 
 use gpui_kit::AssetSource;
+use gpui_kit::Styled;
 use gpui_kit::assets::{Assets, IconName};
-use gpui_kit::component::Icon;
+use gpui_kit::component::{ActiveTheme, Icon};
 
 // 子集之外、本应用用到的图形。加图标时这里必须同步，否则下面的注册完整性测试会红。
 // 反例：EllipsisVertical / PanelLeftClose / PanelLeftOpen 已经在默认那 106 个里，
@@ -60,6 +61,21 @@ impl AssetSource for AppAssets {
         paths.dedup();
         Ok(paths)
     }
+}
+
+/// 一个语义图标的**后果等级**。
+///
+/// 进表的是角色，**不是颜色**：颜色要随主题变（浅色/深色各有一套 danger 值），
+/// 那是主题系统的职责——`cx.theme().danger` 已经把这个矩阵解好了。这里若存具体
+/// 色值，就等于把主题系统抄到错误的层，还要为每个主题各写一遍。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// 常规操作，跟随前景色。
+    Neutral,
+    /// 不可逆或有破坏面的操作。
+    Danger,
+    /// 有后果但可继续、可恢复。
+    Warning,
 }
 
 /// 应用内所有图标的语义名。命名跟着「这个控件在做什么」走，不跟着图形形状走。
@@ -195,6 +211,28 @@ impl AppIcon {
             Target::Custom(bytes) => Icon::default().data(bytes),
         }
     }
+
+    /// 默认后果等级。放在表里，这样「哪些操作是危险的」只有一处答案；
+    /// 调用点仍然可以覆盖（某个低风险的删除可以不标红）。
+    pub const fn role(self) -> Role {
+        match self {
+            Self::Delete => Role::Danger,
+            // Remove（移出对比集合）刻意留在 Neutral：随时能再加回来，
+            // 给它红色就等于把「不可逆」这个信号用废了。
+            _ => Role::Neutral,
+        }
+    }
+
+    /// 带后果色的图标元素。主题色要 `cx` 才能取到，所以这层无法并进
+    /// `From<AppIcon> for Icon`——那条路只能给形状，颜色得由调用点所在的主题决定。
+    pub fn icon_in(self, cx: &gpui_kit::App) -> Icon {
+        let icon = self.icon();
+        match self.role() {
+            Role::Neutral => icon,
+            Role::Danger => icon.text_color(cx.theme().danger),
+            Role::Warning => icon.text_color(cx.theme().warning),
+        }
+    }
 }
 
 /// 一个语义图标当前指向哪儿。
@@ -305,5 +343,32 @@ mod tests {
             checked >= 2,
             "品牌标与等宽标都该走 Custom，实际只有 {checked}"
         );
+    }
+
+    /// 后果等级是有意分配的，不是顺手：删除不可逆所以 Danger，从对比集合移出一项
+    /// 随时可撤销所以必须保持 Neutral——否则「红色 = 危险」这个信号就废了。
+    #[test]
+    fn roles_are_deliberate() {
+        assert_eq!(AppIcon::Delete.role(), Role::Danger);
+        assert_eq!(
+            AppIcon::Remove.role(),
+            Role::Neutral,
+            "移出一项不该标红，否则危险色失去区分力"
+        );
+        assert_eq!(AppIcon::Add.role(), Role::Neutral);
+        assert_eq!(AppIcon::Brand.role(), Role::Neutral);
+    }
+
+    /// 表里只允许出现角色，不允许出现具体色值——颜色归主题。
+    /// 将来有人想加 `Role::Custom("#ff0000")` 会先撞上这条。
+    #[test]
+    fn roles_carry_no_colours() {
+        for role in [Role::Neutral, Role::Danger, Role::Warning] {
+            let text = format!("{role:?}");
+            assert!(
+                !text.contains('#') && !text.contains("rgb"),
+                "Role 不该携带具体颜色：{text}"
+            );
+        }
     }
 }

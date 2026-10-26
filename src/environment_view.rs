@@ -17,7 +17,7 @@ use gpui_kit::{
     base::{InteractiveElementExt as _, StyledExt},
     component::{
         ActiveTheme, Icon, Selectable, Sizable, WindowExt,
-        button::{Button, ButtonVariants},
+        button::{Button, ButtonVariant, ButtonVariants},
         checkbox::Checkbox,
         dialog::{DialogAction, DialogClose, DialogFooter},
         input::{Input, InputState},
@@ -477,6 +477,7 @@ impl EnvironmentModule {
                     "This removes the variable from the user environment. Group copies are not touched.",
                 )
                 .ok_text("Delete")
+                .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
                     module
                         .update(cx, |this, cx| {
@@ -767,7 +768,7 @@ impl EnvironmentModule {
                                 .dropdown_menu({
                                     let weak = cx.weak_entity();
                                     let manager_label = manager.clone();
-                                    move |menu, _, _cx| {
+                                    move |menu, _, cx| {
                                         let edit_weak = weak.clone();
                                         let delete_weak = weak.clone();
                                         let capture_weak = weak.clone();
@@ -782,6 +783,7 @@ impl EnvironmentModule {
                                         let mut menu = menu
                                             .item(
                                                 PopupMenuItem::new(edit_label)
+                                                    .icon(AppIcon::Edit)
                                                     .disabled(!editable)
                                                     .on_click(move |_, window, cx| {
                                                         let edit_key = edit_key.clone();
@@ -792,8 +794,12 @@ impl EnvironmentModule {
                                                             .ok();
                                                     }),
                                             )
+                                            // 破坏性操作单独分区，图标按 Role::Danger 染色：
+                                            // 位置与颜色两条信号都到位，不只靠点开后的确认框。
+                                            .separator()
                                             .item(
                                                 PopupMenuItem::new("Delete from user environment")
+                                                    .icon(AppIcon::Delete.icon_in(cx))
                                                     .disabled(manager_label.is_some() || !editable)
                                                     .on_click(move |_, window, cx| {
                                                         let delete_key = delete_key.clone();
@@ -1120,7 +1126,7 @@ impl EnvironmentModule {
                         Button::new("delete-group")
                             .ghost()
                             .small()
-                            .icon(AppIcon::Delete)
+                            .icon(AppIcon::Delete.icon_in(cx))
                             .tooltip("Delete group")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 let name = this.group_name(group.id);
@@ -1133,6 +1139,7 @@ impl EnvironmentModule {
                                         .title(title.clone())
                                         .description("Its variables leave with the group. Anything this group wrote to the user environment is restored first.")
                                         .ok_text("Delete")
+                                        .ok_variant(ButtonVariant::Danger)
                                         .on_ok(move |_, window, cx| {
                                             module
                                                 .update(cx, |this, cx| {
@@ -1356,7 +1363,7 @@ impl EnvironmentModule {
                             Button::new(format!("delete-group-variable-{id}"))
                                 .ghost()
                                 .xsmall()
-                                .icon(AppIcon::Delete)
+                                .icon(AppIcon::Delete.icon_in(cx))
                                 .tooltip("Remove from group")
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.delete_group_variable(id, window, cx);
