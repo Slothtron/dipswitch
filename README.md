@@ -91,7 +91,7 @@ build.rs           Windows 下生成 .rc 并编进 exe 资源：图标 + 版本�
 assets/
 ├─ brand.svg       应用图标源：全彩带底板，喂 .ico
 ├─ brand-mark.svg  应用内品牌标：同一枚 d，按 Lucide 描边语言重画（见「图标」）
-└─ app.ico         由 tools/make-icon.py 从 brand.svg 生成的 7 档图标，作为产物提交进仓库
+└─ app.ico         提前生成好、随仓库同步的 7 档图标（16/24/32/48/64/128/256）
 src/
 ├─ lib.rs            库目标：让视图与测试共用同一份真实实现
 ├─ main.rs           二进制入口：初始化、注册资产源、开库、绑键、建窗口
@@ -107,9 +107,9 @@ src/
 ├─ fonts.rs          fontdb 扫描与 family/face 模型（不依赖 GPUI）
 └─ size_slider.rs    带预设刻度与松手吸附的字号滑杆
 examples/canvas_probe.rs 自绘画布探针：节点用 absolute div、连线用 canvas + PathBuilder
-tools/cap-window.ps1     用 PrintWindow 抓当前窗口做 UI 走查（默认写 shots/capture.png，已忽略）
-tools/make-icon.py       从 brand.svg 生成 app.ico；`--verify <ico> <exe>` 断言每一档都进了 exe
 ```
+
+本仓库只有交付物与应用源码；图标生成与窗口截图这类开发脚本作为维护者工具单独维护，不在仓库内——构建不依赖它们，`assets/app.ico` 是提前生成好并提交进来的产物。
 
 状态所有权：
 
@@ -136,7 +136,7 @@ tools/make-icon.py       从 brand.svg 生成 app.ico；`--verify <ico> <exe>` �
 
 **Windows 的窗口图标只能走资源编译。** `WindowOptions.icon` 标注 X11 only，GPUI 在 Windows 下也不暴露 HWND，所以运行期 `WM_SETICON` 这条路不通。做法照搬 Zed 的 `crates/windows_resources`：`build.rs` 在 `OUT_DIR` 里**生成** `.rc`（`#pragma code_page(65001)` + `1 ICON` + `VERSIONINFO`），交给 `embed-resource` 编译。它自带 `KitsRoot10` → `vswhom` → `PATH` 的 `rc.exe` 发现链，支持 GNU 工具链走 `windres`，并认 `RC` / `RC_<target>` 覆盖；顺带把版本信息也写进文件属性。两点与 Zed 有意不同：**不写 manifest 行**——`gpui-pre` 自己的 build.rs 已经嵌了 `1 RT_MANIFEST`（实测产物含 `dpiAware`），再来一份同 ID 同类型就是自相冲突；**失败降级成 `cargo:warning`** 而不是 `unwrap()`——图标是观感项，缺 SDK 时也该构建出可用的 exe。
 
-**资源生成不属于构建。** `build.rs` 只**消费**已提交的 `app.ico`，不生成它——生成是维护者的显式步骤（`python tools/make-icon.py`）。把生成塞进构建等于让构建依赖 Python 加一个 SVG 光栅器，与「离线构建」的验收项冲突。代价是一条纪律：**改了 `assets/brand.svg` 必须重跑该脚本**，否则 exe 里还是旧图标而构建不会报错。该脚本自身也不写死机器专属路径：光栅器按 `DIPSWITCH_RASTERIZER` → `rsvg-convert` → PATH 上的 Chrome/Edge → 平台标准安装位置查找（它刻意不尝试 `convert`——Windows 上那是 FAT 转 NTFS 的磁盘工具，不是 ImageMagick）。
+**资源生成不属于构建。** `build.rs` 只**消费**已提交的 `app.ico`，不生成它。把生成塞进构建等于让构建依赖 Python 加一个 SVG 光栅器，与「离线构建」的验收项冲突。所以 `assets/app.ico` 是**提前生成好、随仓库同步的产物**；改了 `assets/brand.svg` 之后要用维护者工具重新出图并提交，否则 exe 里还是旧图标而构建不会报错。
 
 **交互路径上的落盘只提交一次。** `Settings::save` 把十几条偏好收进一个事务（`DipswitchStore::set_settings`），库本身跑 WAL + `synchronous = NORMAL`。默认 journal 下逐条提交在 Windows 上要 ~50 ms，整组一个事务后是 ~3 ms——否则每次切模块、点收藏都在这上面卡一下。
 
@@ -173,9 +173,9 @@ cargo clippy --all-targets     0 warning
 cargo test                     47 passed + 1 ignored（真实注册表探针）
 cargo build --release          通过
 
-# 资源侧：确认 .ico 的每一档都进了 exe，且 gpui 的 manifest 没被我们挤掉
-python tools/make-icon.py --verify assets/app.ico target/release/dipswitch.exe
-#   7/7 icon entries embedded + manifest present
+# 资源侧核对：rc.exe 把 PNG 型 ICO 条目的负载原样存进 RT_ICON，所以在 exe 里逐档搜
+# 字节就是硬证据（别用 ExtractAssociatedIcon——它遇 PNG 压缩条目会返回 null）。
+# 实测 debug 与 release 均为 7/7 图标条目 + gpui 的 RT_MANIFEST 仍在（含 dpiAware）。
 ```
 
 自动化覆盖（`cargo test`）：
