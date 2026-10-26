@@ -134,6 +134,8 @@ tools/probe-exe-icon.ps1 用 ExtractIconExW 验证图标确实进了 exe 资源
 
 **Windows 的窗口图标只能走资源编译。** `WindowOptions.icon` 标注 X11 only，GPUI 在 Windows 下也不暴露 HWND，所以运行期 `WM_SETICON` 这条路不通。做法是 `assets/app.ico` + `assets/windows.rc` + `build.rs` 调 Windows SDK 的 `rc.exe`；找不到 `rc.exe` 时跳过并留一条 `cargo:warning`，图标是观感项，不该让构建失败。
 
+**资源生成不属于构建。** `build.rs` 只**消费**已提交的 `app.ico`，不生成它——生成是维护者的显式步骤（`python tools/make-icon.py`）。把生成塞进构建等于让构建依赖 Python 加一个 SVG 光栅器，与「离线构建」的验收项冲突。代价是一条纪律：**改了 `assets/brand.svg` 必须重跑该脚本**，否则 exe 里还是旧图标而构建不会报错。两处外部定位都不写死机器专属路径：`rc.exe` 按 `DIPSWITCH_RC` → `WindowsSdkDir` → 注册表 `KitsRoot10` → `PATH` 依次查找（普通 shell 里 `WindowsSdkDir` 通常不存在，注册表才是可靠来源）；光栅器按 `DIPSWITCH_RASTERIZER` → `rsvg-convert` → PATH 上的 Chrome/Edge → 平台标准安装位置查找。
+
 **交互路径上的落盘只提交一次。** `Settings::save` 把十几条偏好收进一个事务（`DipswitchStore::set_settings`），库本身跑 WAL + `synchronous = NORMAL`。默认 journal 下逐条提交在 Windows 上要 ~50 ms，整组一个事务后是 ~3 ms——否则每次切模块、点收藏都在这上面卡一下。
 
 **持久化。** 配置库在 `%LOCALAPPDATA%\dipswitch\dipswitch.db`（Linux `~/.config/…`，macOS `~/Library/Application Support/…`）。schema：
