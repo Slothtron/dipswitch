@@ -107,9 +107,8 @@ src/
 ├─ fonts.rs          fontdb 扫描与 family/face 模型（不依赖 GPUI）
 └─ size_slider.rs    带预设刻度与松手吸附的字号滑杆
 examples/canvas_probe.rs 自绘画布探针：节点用 absolute div、连线用 canvas + PathBuilder
-tools/cap-window.ps1     用 PrintWindow 抓当前窗口，供 UI 走查
-tools/make-icon.py       从 brand.svg 生成 app.ico（Chrome 无头按真实像素光栅化）
-tools/probe-exe-icon.ps1 用 ExtractIconExW 验证图标确实进了 exe 资源
+tools/cap-window.ps1     用 PrintWindow 抓当前窗口做 UI 走查（默认写 shots/capture.png，已忽略）
+tools/make-icon.py       从 brand.svg 生成 app.ico；`--verify <ico> <exe>` 断言每一档都进了 exe
 ```
 
 状态所有权：
@@ -173,6 +172,10 @@ cargo check --all-targets      通过
 cargo clippy --all-targets     0 warning
 cargo test                     47 passed + 1 ignored（真实注册表探针）
 cargo build --release          通过
+
+# 资源侧：确认 .ico 的每一档都进了 exe，且 gpui 的 manifest 没被我们挤掉
+python tools/make-icon.py --verify assets/app.ico target/release/dipswitch.exe
+#   7/7 icon entries embedded + manifest present
 ```
 
 自动化覆盖（`cargo test`）：

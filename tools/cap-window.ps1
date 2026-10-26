@@ -10,11 +10,14 @@
 #
 # Usage, with the demo already running:
 #   powershell -ExecutionPolicy Bypass -File tools/cap-window.ps1
-#   powershell -ExecutionPolicy Bypass -File tools/cap-window.ps1 -Out shots/live.png
+#   powershell -ExecutionPolicy Bypass -File tools/cap-window.ps1 -Out shots/capture.png
+#
+# 默认写到 shots/capture.png（已 gitignore）——不要指回 shots/ 里的已发布截图，
+# 那会静默覆盖 README 用的图。
 
 param(
     [string]$Title = "Dipswitch",
-    [string]$Out = "shots/dipswitch-fonts.png",
+    [string]$Out = "shots/capture.png",
     [int]$SettleMs = 800
 )
 

@@ -14,7 +14,9 @@
 注意：Windows 自带的 `convert.exe` 是 FAT 转 NTFS 的磁盘工具，不是 ImageMagick，
 不要把它当光栅器用（本脚本因此不尝试 `convert`）。
 
-用法：python tools/make-icon.py
+用法：
+    python tools/make-icon.py                      # 重新生成 assets/app.ico
+    python tools/make-icon.py --verify <ico> <exe> # 断言每一档都进了 exe
 """
 
 import os
@@ -150,7 +152,46 @@ def build_ico(entries: list[tuple[int, bytes]], dest: str) -> None:
         handle.write(out)
 
 
-def main() -> None:
+def read_ico_entries(path: str) -> list[tuple[int, bytes]]:
+    """解析 .ico 的目录项，返回 (边长, PNG 负载)。"""
+    with open(path, "rb") as handle:
+        blob = handle.read()
+    count = struct.unpack("<H", blob[4:6])[0]
+    entries = []
+    for index in range(count):
+        entry = blob[6 + 16 * index : 6 + 16 * (index + 1)]
+        width = entry[0] or 256
+        size, offset = struct.unpack("<II", entry[8:16])
+        entries.append((width, blob[offset : offset + size]))
+    return entries
+
+
+def verify_exe(ico_path: str, exe_path: str) -> int:
+    """确认 .ico 的每一档都原样进了 exe。
+
+    rc.exe 把 PNG 型 ICO 条目的负载原样存进 RT_ICON，所以直接搜字节就是最硬的证据。
+    不要用 `ExtractAssociatedIcon` 判断成败：它只挑「最合适」的一枚，遇到 PNG 压缩
+    条目会返回 null，会把好的产物误判成坏的。
+    """
+    entries = read_ico_entries(ico_path)
+    with open(exe_path, "rb") as handle:
+        exe = handle.read()
+    missing = [size for size, png in entries if exe.find(png) < 0]
+    for size, _ in entries:
+        mark = "absent" if size in missing else "embedded"
+        print(f"  {size:>3}px  {mark}")
+    print(f"{exe_path}: {len(entries) - len(missing)}/{len(entries)} icon entries embedded")
+    if b"dpiAware" in exe:
+        print("  manifest present (gpui embeds RT_MANIFEST; our .rc must not)")
+    return 1 if missing else 0
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) > 1 and argv[1] == "--verify":
+        if len(argv) != 4:
+            sys.exit("用法：python tools/make-icon.py --verify <app.ico> <app.exe>")
+        return verify_exe(argv[2], argv[3])
+
     rasterizer = find_rasterizer()
     print(f"rasterizer: {rasterizer.kind}  ({rasterizer.exe})")
     entries: list[tuple[int, bytes]] = []
@@ -165,7 +206,8 @@ def main() -> None:
             print(f"  {size:>3}px  {len(blob):>6} bytes")
     build_ico(entries, ICO_PATH)
     print(f"wrote {ICO_PATH}  {os.path.getsize(ICO_PATH)} bytes  ({len(entries)} sizes)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main(sys.argv))
