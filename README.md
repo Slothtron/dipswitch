@@ -50,10 +50,11 @@
 
 全部界面图标来自**同一个家族**（Lucide，24×24 网格、2px 描边、圆头端点），所以风格天然统一；组件自带的窗口按钮也是 Lucide，不需要额外对齐。
 
-- **语义命名，不按形状命名**：`src/icon.rs` 的 `AppIcon` 是应用内图标的唯一出口，变体叫 `Delete`、`Edit`、`NewGroup`、`Recent`，不叫 `Trash`、`Pencil`。图形在哪、为什么选它，集中写在 `AppIcon::icon_name()` 一个 `match` 里，改图形不影响调用点。
+- **调用点只说语义，不说图形**：`src/icon.rs` 的 `AppIcon` 是应用内图标的唯一词汇表，变体叫 `Delete`、`Edit`、`NewGroup`、`Recent`，不叫 `Trash`、`Pencil`。全项目 40 处调用点没有一处直接写 `IconName`——`icon.rs` 之外可以 grep 验证为零。
+- **改指向只动一行**：每个语义在 `AppIcon::target()` 里指向一个 `Target`——`Builtin(IconName)` 用 Lucide 图形，`Custom(&'static [u8])` 用应用自带的 SVG 字节（集中在 `icon::custom`）。以后想把 `Delete` 从内置垃圾桶换成自己画的形状，只改那一行，调用点和其余图标都不受影响。`AppIcon::Brand` 是当前唯一走 `Custom` 的变体，已经在标题栏渲染，所以这条通路不是纸面设计。
 - **不受组件层 106 个的限制**：`gpui_component::IconName` 只是 `gpui_kit_assets::IconName`（1,830 个）的兼容子集，而组件 API 收的是 `impl Into<Icon>`、`Icon` 对任何实现 `IconNamed` 的枚举有 blanket `From`——所以全量目录都能用。代价是共享枚举给出的是**路径**，默认包只嵌了那 106 个的字节，因此本应用用到的子集之外图形由 `icon_assets!` 点名嵌入（当前 10 个，约 +19 KiB）。
-- **漏登记会立刻失败**：`icon::tests::every_app_icon_resolves_through_the_registered_source` 逐个断言 `AppIcon` 的图形能从注册后的资产源取到 SVG 字节——用了没登记的图形不会编译报错，只会在界面上画出一片空白，这条测试就是拦它的。
-- **品牌标**：一枚字母 `d`，碗部是一格打到 ON 的开关。任务栏/文件图标用全彩版，标题栏用单色描边版（原因见「实现要点」）。
+- **漏登记会立刻失败**：`icon::tests::every_app_icon_resolves_to_real_svg` 逐个断言每个语义图标取得到真实 SVG 字节，两类指向都覆盖（内置的查注册后的资产源，自定义的查内嵌内容）。用了没登记的图形不会编译报错，只会在界面上画出一片空白，所以必须在测试里拦住。
+- **品牌标**：一枚字母 `d`，碗部是一格打到 ON 的开关。任务栏/文件图标用 `assets/brand.svg`（全彩带底板），应用内用 `assets/brand-mark.svg`（单色描边版，原因见「实现要点」）；后者经 `AppIcon::Brand` 进出，并有 `brand_mark_is_mask_safe_not_the_exe_tile` 拦住「把带底板的版本拿进应用内用」。
 - 语义修正记录：`Compare` 由「仪表盘」改为两栏并排、`Recent` 由「顺时针箭头」改为时钟（原来与「重新扫描」撞形）、`Edit` 由「查找替换」改为铅笔、`Delete` 由「退格键」改为垃圾桶、`NewGroup` 由「文件夹」改为新建文件夹、`Environment` 由终端方块改为 `Variable`、`Monospace` 由「大小写」改为花括号；警告（`TriangleAlert`）与错误（`CircleAlert`）从此分形分色。
 
 ## 运行
@@ -185,7 +186,7 @@ cargo build --release          通过
 - **护栏**：被启用分组接管的 key 拒绝系统层直接编辑/删除，未接管的放行。
 - **存储层**：分组同名唯一、组内 key 唯一、跨组同名允许、级联删除、`enabled_seq` 递增与清空、值类型按注册表名存取、流水倒序与清空。
 - **偏好**：`Settings` 全字段往返 SQLite；空库回默认值；旧 JSON 能导入、坏 JSON 不炸且不落库。
-- **图标注册完整性**：每个 `AppIcon` 的图形都能从注册后的资产源取到真实 SVG 字节；`AppIcon::ALL` 覆盖全部变体，且没有两个语义图标意外共用同一图形。
+- **图标指向完整性**：每个 `AppIcon` 都取得到真实 SVG 字节，内置与自定义两类指向都覆盖；`AppIcon::ALL` 覆盖全部变体，且没有两个语义图标意外共用同一内置图形；品牌标必须是描边 + `currentColor` 且不带 exe 底板色。
 - **平台适配**：`REG_SZ` / `REG_EXPAND_SZ` / `REG_MULTI_SZ` 的字节级编解码往返（含 `%`、空格、分号），不支持的类型不会被当字符串读出。
 - **真实注册表探针**（`cargo test -- --ignored`）：写一个 `DIPSWITCH_SELFTEST_PROBE` 探针 key → 读回校验类型与值 → 确认当前进程可见 → 删除并确认清走。默认不跑，因为它真的会动 `HKCU\Environment` 并广播一次 `WM_SETTINGCHANGE`。
 

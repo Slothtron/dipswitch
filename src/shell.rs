@@ -25,7 +25,7 @@ use gpui_kit::{
 use crate::{
     environment_view::EnvironmentModule,
     fonts_view::FontsModule,
-    icon::{AppIcon, brand},
+    icon::AppIcon,
     settings::{self, Settings},
 };
 
@@ -166,8 +166,9 @@ impl Dipswitch {
                 .flex_1()
                 .min_w_0()
                 .pr_2()
-                // 品牌标与 exe 图标同源（assets/brand.svg），标题栏与任务栏因此一致。
-                .child(brand().small())
+                // 品牌标也走同一张指向表：AppIcon::Brand → custom::BRAND（描边版，
+                // 因为 Icon 是单色蒙版着色）。exe 图标用 assets/brand.svg 那份全彩带底板。
+                .child(AppIcon::Brand.icon().small())
                 // 标题栏整体是系统的 HTCAPTION 拖拽区：按下会被 WndProc 交给窗口
                 // 移动的模态循环，控件只能收到按下、收不到抬起，点击永远不触发。
                 // 控件在自己的按下事件里阻止冒泡，平台层就不会把这次按下交出去。
