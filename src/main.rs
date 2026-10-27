@@ -5,8 +5,11 @@ use dipswitch::{
     fonts_view::{CopyFamilyName, FocusSearch, KEY_CONTEXT as FONTS_KEY_CONTEXT, RefreshFonts},
     icon::AppAssets,
     settings::{self, Settings},
-    shell::{Dipswitch, KEY_CONTEXT, ShowEnvironment, ShowFonts, ToggleNavigation},
+    shell::{Dipswitch, KEY_CONTEXT, ShowEnvironment, ShowFonts, ShowTraffic, ToggleNavigation},
     store::DipswitchStore,
+    traffic_view::{
+        self as traffic, FocusFilter as TrafficFocusFilter, ImportCapture as TrafficImport,
+    },
 };
 #[cfg(target_os = "linux")]
 use gpui_kit::WindowDecorations;
@@ -15,11 +18,27 @@ use gpui_kit::{
     size,
 };
 
+/// 首次启动的窗口尺寸与最小尺寸：小于最小尺寸时导航栏加主从两栏会互相挤压。
+const DEFAULT_WINDOW_WIDTH: f32 = 1180.0;
+const DEFAULT_WINDOW_HEIGHT: f32 = 760.0;
+const MIN_WINDOW_WIDTH: f32 = 880.0;
+const MIN_WINDOW_HEIGHT: f32 = 560.0;
+
+/// 命令行里第一个存在的文件：`dipswitch session.har` 直接打开抓包会话。
+fn initial_capture() -> Option<std::path::PathBuf> {
+    let path = std::env::args_os()
+        .skip(1)
+        .map(std::path::PathBuf::from)
+        .find(|path| path.is_file())?;
+    Some(path)
+}
+
 fn main() {
+    let initial_capture = initial_capture();
     gpui_kit::application()
         // 组件默认包 + 本应用额外嵌入的图标，见 icon::AppAssets。
         .with_assets(AppAssets)
-        .run(|cx| {
+        .run(move |cx| {
             // 必须先初始化 Component/Base，再创建任何组件视图。
             gpui_kit::init(cx);
 
@@ -28,6 +47,7 @@ fn main() {
                 // 工作台层：模块切换与导航折叠。
                 KeyBinding::new("alt-1", ShowFonts, Some(KEY_CONTEXT)),
                 KeyBinding::new("alt-2", ShowEnvironment, Some(KEY_CONTEXT)),
+                KeyBinding::new("alt-3", ShowTraffic, Some(KEY_CONTEXT)),
                 KeyBinding::new("cmd-b", ToggleNavigation, Some(KEY_CONTEXT)),
                 // 字体模块层。
                 KeyBinding::new("cmd-c", CopyFamilyName, Some(FONTS_KEY_CONTEXT)),
@@ -45,6 +65,9 @@ fn main() {
                     AddVariable,
                     Some(environment_view::KEY_CONTEXT),
                 ),
+                // 抓包模块层。
+                KeyBinding::new("cmd-o", TrafficImport, Some(traffic::KEY_CONTEXT)),
+                KeyBinding::new("cmd-f", TrafficFocusFilter, Some(traffic::KEY_CONTEXT)),
             ]);
 
             // 配置库：即使打不开也要让工作台起来，并把原因显示在内容区顶部，
@@ -68,8 +91,8 @@ fn main() {
                 cx,
             );
 
-            let width = settings.window_width.unwrap_or(1180.0);
-            let height = settings.window_height.unwrap_or(760.0);
+            let width = settings.window_width.unwrap_or(DEFAULT_WINDOW_WIDTH);
+            let height = settings.window_height.unwrap_or(DEFAULT_WINDOW_HEIGHT);
             let centered = WindowBounds::centered(size(px(width), px(height)), cx);
             let is_maximized = settings.window_maximized.unwrap_or(false);
             cx.set_global(settings);
@@ -102,7 +125,7 @@ fn main() {
                     centered
                 }),
                 // 最小尺寸是窗口系统的物理边界：要容得下导航 + 模块的主从布局。
-                window_min_size: Some(size(px(880.0), px(560.0))),
+                window_min_size: Some(size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))),
                 // Linux 任务栏/桌面项分组用；其他平台忽略。
                 app_id: Some("dipswitch".to_string()),
                 #[cfg(target_os = "linux")]
@@ -116,8 +139,11 @@ fn main() {
             });
 
             // open_window 会把根视图包进 Root，通知 / 对话框等框架能力依赖它。
+            let initial_capture = initial_capture.clone();
             gpui_kit::open_window(options, cx, move |window, cx| {
-                cx.new(|cx| Dipswitch::new(window, cx, configuration_error))
+                cx.new(|cx| {
+                    Dipswitch::new(window, cx, configuration_error, initial_capture.clone())
+                })
             })
             .expect("failed to open window");
         });

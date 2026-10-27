@@ -278,6 +278,10 @@ mod win {
     }
 
     /// 让本进程也带上刚写入的值，界面上的「生效值」才与现实一致。
+    #[expect(
+        unsafe_code,
+        reason = "std::env 的写入在 edition 2024 是 unsafe；调用只发生在主线程 UI 回调"
+    )]
     pub fn sync_process_environment(key: &str, value: Option<&str>) {
         // SAFETY: 环境变量写入都在主线程串行执行，且只发生在 UI 回调中。
         unsafe {
@@ -289,6 +293,10 @@ mod win {
     }
 
     /// 广播 `WM_SETTINGCHANGE`，让 shell 与新进程重新读取用户环境。
+    #[expect(
+        unsafe_code,
+        reason = "Win32 FFI 是平台边界，签名与常量来自 windows-sys"
+    )]
     pub fn broadcast_environment_change() {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,

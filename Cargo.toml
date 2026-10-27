@@ -17,10 +17,24 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "7"
 
+# 抓包日志导入：HAR 与 Charles 的 JSON 会话走 serde_json，Charles 的 .chls
+# 是 XML，用 quick-xml 的事件流解析。base64 只用来解 Har/Charles 里编码过的正文。
+quick-xml = "0.42"
+base64 = "0.22"
+# Charles 的 .chls 有两种：XML 或 Java 对象序列化流（二进制）。后者用这个解析。
+java-serialization = "0.1"
+# 二进制会话里保存的是网络上的原始正文：gzip / deflate 的要先解开才能读。
+flate2 = "1"
+# 抓包时间戳按本机时区展示（与 Charles / 浏览器一致）。gpui 已经带进依赖树，这里显式声明。
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
 # 本地配置库：主题/预览偏好与环境变量分组都存在这里
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
+# 打开文件对话框时按扩展名过滤：GPUI 的 PathPromptOptions 没有过滤项，这里补一个。
+# 只在 Windows 上启用，避免把 Linux 的后端选择问题带进构建。
+rfd = { version = "0.17", default-features = false }
 # 用户级环境变量读写（HKCU\Environment）
 winreg = "0.56"
 # 只需要 WM_SETTINGCHANGE 广播
@@ -33,6 +47,16 @@ windows-sys = { version = "0.60", features = [
 # 它自带 KitsRoot10 → vswhom → PATH 的 rc.exe 发现链，并认 RC / RC_<target> 覆盖。
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3.0"
+
+# 静态验证门禁：本项目没有 unsafe，宏只用 declarative 形式；
+# 未完成的代码不该能提交。余下的 lint 由 `cargo clippy --all-targets` 把关。
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
 
 # GPUI 的绘制与布局在未优化构建下明显发滞：依赖按 O2 编译，
 # 本 crate 用 O1 兼顾响应速度与可调试性（debug 断言仍然开启）。

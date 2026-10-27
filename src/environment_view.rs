@@ -11,8 +11,8 @@
 use std::collections::BTreeMap;
 
 use gpui_kit::{
-    AnyElement, App, AppContext, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable, Font,
-    FontWeight, InteractiveElement, IntoElement, ParentElement, Pixels, Render, SharedString,
+    AnyElement, App, AppContext, ClipboardItem, Context, Entity, FocusHandle, Focusable,
+    FontWeight, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, WeakEntity, Window, actions,
     base::{InteractiveElementExt as _, StyledExt},
     component::{
@@ -28,7 +28,6 @@ use gpui_kit::{
     },
     div,
     prelude::FluentBuilder,
-    px,
 };
 
 use crate::{
@@ -37,6 +36,10 @@ use crate::{
     icon::AppIcon,
     store::DipswitchStore,
     system_env::{self, SystemVariable, ValueKind},
+    ui::{
+        self, ACTIONS_COLUMN, GROUP_KEY_COLUMN, KEY_COLUMN, SOURCE_COLUMN, STATE_COLUMN,
+        TYPE_COLUMN,
+    },
 };
 
 pub const KEY_CONTEXT: &str = "Environment";
@@ -385,7 +388,7 @@ impl EnvironmentModule {
             let content_form = content_form.clone();
             dialog
                 .title(dialog_title.clone())
-                .w(px(460.))
+                .w(ui::DIALOG_WIDTH)
                 .content(move |content, window, cx| {
                     content.child(render_variable_form(
                         &content_form,
@@ -448,7 +451,7 @@ impl EnvironmentModule {
             let module = module.clone();
             dialog
                 .title(dialog_title.clone())
-                .w(px(420.))
+                .w(ui::DIALOG_WIDTH)
                 .content(move |content, window, cx| {
                     content.child(render_group_form(&content_form, window, cx))
                 })
@@ -666,7 +669,7 @@ impl EnvironmentModule {
             .map(|origin| origin.shadowed_groups)
             .unwrap_or_default();
         let editable = variable.is_editable();
-        let mono = monospace(cx);
+        let mono = ui::mono_font(cx);
 
         let copy_value = display.clone();
         let row_edit_key = key.clone();
@@ -705,7 +708,7 @@ impl EnvironmentModule {
                             .ok();
                     })
                     .child(
-                        cell(Some(px(220.))).child(
+                        ui::cell(Some(KEY_COLUMN)).child(
                             div()
                                 .font(mono.clone())
                                 .text_sm()
@@ -714,11 +717,11 @@ impl EnvironmentModule {
                         ),
                     )
                     .child(
-                        cell(None)
+                        ui::cell(None)
                             .child(div().font(mono).text_sm().truncate().child(display.clone())),
                     )
                     .child(
-                        cell(Some(px(120.))).child(
+                        ui::cell(Some(TYPE_COLUMN)).child(
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
@@ -726,7 +729,7 @@ impl EnvironmentModule {
                         ),
                     )
                     .child(
-                        cell(Some(px(150.))).child(
+                        ui::cell(Some(SOURCE_COLUMN)).child(
                             div()
                                 .text_xs()
                                 .truncate()
@@ -744,27 +747,21 @@ impl EnvironmentModule {
                     ),
             )
             .child(
-                cell(Some(px(96.))).justify_end().child(
+                ui::cell(Some(ACTIONS_COLUMN)).justify_end().child(
                     div()
                         .h_flex()
                         .items_center()
                         .justify_end()
                         .gap_1()
                         .child(
-                            Button::new(format!("copy-variable-{key}"))
-                                .ghost()
-                                .xsmall()
-                                .icon(AppIcon::Copy)
+                            ui::row_icon_button(format!("copy-variable-{key}"), AppIcon::Copy, cx)
                                 .tooltip("Copy value")
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.copy_value(copy_value.clone(), window, cx);
                                 })),
                         )
                         .child(
-                            Button::new(format!("more-variable-{key}"))
-                                .ghost()
-                                .xsmall()
-                                .icon(AppIcon::More)
+                            ui::row_icon_button(format!("more-variable-{key}"), AppIcon::More, cx)
                                 .dropdown_menu({
                                     let weak = cx.weak_entity();
                                     let manager_label = manager.clone();
@@ -960,8 +957,8 @@ impl EnvironmentModule {
                 h_resizable("environment-groups")
                     .child(
                         resizable_panel()
-                            .size(px(260.))
-                            .size_range(px(200.)..px(420.))
+                            .size(ui::GROUP_LIST_WIDTH)
+                            .size_range(ui::GROUP_LIST_MIN..ui::GROUP_LIST_MAX)
                             .child(list),
                     )
                     .child(resizable_panel().min_w_0().child(detail)),
@@ -980,10 +977,11 @@ impl EnvironmentModule {
     ) -> AnyElement {
         let group_id = group.id;
         let is_enabled = group.is_enabled;
+        let count = ui::counted(variable_count, "variable", "variables");
         let status = if is_enabled {
-            format!("{variable_count} variables · priority {rank}")
+            format!("{count} · priority {rank}")
         } else {
-            format!("{variable_count} variables · off")
+            format!("{count} · off")
         };
         let secondary = if is_selected {
             cx.theme().accent_foreground.opacity(0.8)
@@ -1113,20 +1111,14 @@ impl EnvironmentModule {
                             })),
                     )
                     .child(
-                        Button::new("rename-group")
-                            .ghost()
-                            .small()
-                            .icon(AppIcon::Edit)
+                        ui::icon_button("rename-group", AppIcon::Edit, cx)
                             .tooltip("Rename group")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_group_dialog(Some(group.id), window, cx);
                             })),
                     )
                     .child(
-                        Button::new("delete-group")
-                            .ghost()
-                            .small()
-                            .icon(AppIcon::Delete.icon_in(cx))
+                        ui::icon_button("delete-group", AppIcon::Delete, cx)
                             .tooltip("Delete group")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 let name = this.group_name(group.id);
@@ -1168,9 +1160,11 @@ impl EnvironmentModule {
                         .text_xs()
                         .text_color(cx.theme().warning)
                         .child(Icon::new(AppIcon::Warning).small())
-                        .child(format!(
-                            "{conflicts} variables are overridden by a group enabled later"
-                        )),
+                        .child(if conflicts == 1 {
+                            "1 variable is overridden by a group enabled later".to_string()
+                        } else {
+                            format!("{conflicts} variables are overridden by a group enabled later")
+                        }),
                 )
             });
 
@@ -1264,7 +1258,7 @@ impl EnvironmentModule {
             id,
             key: key.clone(),
         };
-        let mono = monospace(cx);
+        let mono = ui::mono_font(cx);
         let overridden = self
             .origins
             .get(&key)
@@ -1297,7 +1291,7 @@ impl EnvironmentModule {
                             .ok();
                     })
                     .child(
-                        cell(Some(px(200.))).child(
+                        ui::cell(Some(GROUP_KEY_COLUMN)).child(
                             div()
                                 .font(mono.clone())
                                 .text_sm()
@@ -1306,7 +1300,7 @@ impl EnvironmentModule {
                         ),
                     )
                     .child(
-                        cell(None).child(
+                        ui::cell(None).child(
                             div()
                                 .font(mono.clone())
                                 .text_sm()
@@ -1315,7 +1309,7 @@ impl EnvironmentModule {
                         ),
                     )
                     .child(
-                        cell(Some(px(120.))).child(
+                        ui::cell(Some(TYPE_COLUMN)).child(
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
@@ -1324,50 +1318,62 @@ impl EnvironmentModule {
                     ),
             )
             .child(
-                cell(Some(px(110.))).justify_end().child(
+                ui::cell(Some(STATE_COLUMN)).child(
+                    div()
+                        .text_xs()
+                        .text_color(if overridden {
+                            cx.theme().warning
+                        } else {
+                            cx.theme().muted_foreground
+                        })
+                        .child(if overridden { "Overridden" } else { "—" }),
+                ),
+            )
+            .child(
+                ui::cell(Some(ACTIONS_COLUMN)).justify_end().child(
                     div()
                         .h_flex()
                         .items_center()
                         .justify_end()
                         .gap_1()
-                        .when(overridden, |this| {
-                            this.child(
-                                div()
-                                    .flex_1()
-                                    .text_xs()
-                                    .text_color(cx.theme().warning)
-                                    .child("Overridden by a later group"),
+                        .child(
+                            ui::row_icon_button(
+                                format!("copy-group-variable-{key}"),
+                                AppIcon::Copy,
+                                cx,
                             )
-                        })
-                        .child(
-                            Button::new(format!("copy-group-variable-{key}"))
-                                .ghost()
-                                .xsmall()
-                                .icon(AppIcon::Copy)
-                                .tooltip("Copy value")
-                                .on_click(cx.listener(move |this, _, window, cx| {
+                            .tooltip("Copy value")
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
                                     this.copy_value(value.clone(), window, cx);
-                                })),
+                                },
+                            )),
                         )
                         .child(
-                            Button::new(format!("edit-group-variable-{key}"))
-                                .ghost()
-                                .xsmall()
-                                .icon(AppIcon::Edit)
-                                .tooltip("Edit in this group")
-                                .on_click(cx.listener(move |this, _, window, cx| {
+                            ui::row_icon_button(
+                                format!("edit-group-variable-{key}"),
+                                AppIcon::Edit,
+                                cx,
+                            )
+                            .tooltip("Edit in this group")
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
                                     this.open_variable_dialog(edit_target.clone(), window, cx);
-                                })),
+                                },
+                            )),
                         )
                         .child(
-                            Button::new(format!("delete-group-variable-{id}"))
-                                .ghost()
-                                .xsmall()
-                                .icon(AppIcon::Delete.icon_in(cx))
-                                .tooltip("Remove from group")
-                                .on_click(cx.listener(move |this, _, window, cx| {
+                            ui::row_icon_button(
+                                format!("delete-group-variable-{id}"),
+                                AppIcon::Delete,
+                                cx,
+                            )
+                            .tooltip("Remove from group")
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
                                     this.delete_group_variable(id, window, cx);
-                                })),
+                                },
+                            )),
                         ),
                 ),
             )
@@ -1457,10 +1463,9 @@ impl EnvironmentModule {
     pub fn status_text(&self) -> String {
         let enabled = self.groups.iter().filter(|group| group.is_enabled).count();
         format!(
-            "{} variables · {} groups · {} enabled",
-            self.variables.len(),
-            self.groups.len(),
-            enabled
+            "{} · {} · {enabled} enabled",
+            ui::counted(self.variables.len(), "variable", "variables"),
+            ui::counted(self.groups.len(), "group", "groups")
         )
     }
 
@@ -1509,7 +1514,12 @@ impl Render for EnvironmentModule {
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child(format!(
-                            "{managed} variables are held by an enabled group; disabling that group restores their previous value"
+                            "{} held by an enabled group; disabling that group restores the previous value",
+                            if managed == 1 {
+                                "1 variable is".to_string()
+                            } else {
+                                format!("{managed} variables are")
+                            }
                         )),
                 )
             })
@@ -1542,52 +1552,32 @@ fn group_status(group: &EnvGroup, groups: &[EnvGroup]) -> String {
     format!("Enabled · priority {rank} of {}", ranks.len())
 }
 
-fn monospace(cx: &App) -> Font {
-    Font {
-        family: cx.theme().mono_font_family.clone(),
-        ..Default::default()
-    }
-}
-
-/// 表头外框。列宽由调用方的 [`cell`] 决定，Value 列吃掉剩余宽度。
-fn table_header(cx: &App) -> Div {
-    div()
-        .w_full()
-        .h_flex()
-        .items_center()
-        .text_sm()
-        .bg(cx.theme().tokens.table_head)
-        .text_color(cx.theme().table_head_foreground)
-        .border_b_1()
-        .border_color(cx.theme().table_row_border)
-}
-
 fn system_variables_header(cx: &App) -> AnyElement {
-    table_header(cx)
-        .child(cell(Some(px(220.))).child("Variable"))
-        .child(cell(None).child("Value"))
-        .child(cell(Some(px(120.))).child("Type"))
-        .child(cell(Some(px(150.))).child("Source"))
-        .child(cell(Some(px(96.))).justify_end().child("Actions"))
+    ui::table_header(cx)
+        .child(ui::cell(Some(KEY_COLUMN)).child("Variable"))
+        .child(ui::cell(None).child("Value"))
+        .child(ui::cell(Some(TYPE_COLUMN)).child("Type"))
+        .child(ui::cell(Some(SOURCE_COLUMN)).child("Source"))
+        .child(
+            ui::cell(Some(ACTIONS_COLUMN))
+                .justify_end()
+                .child("Actions"),
+        )
         .into_any_element()
 }
 
 fn group_variables_header(cx: &App) -> AnyElement {
-    table_header(cx)
-        .child(cell(Some(px(200.))).child("Variable"))
-        .child(cell(None).child("Value"))
-        .child(cell(Some(px(120.))).child("Type"))
-        .child(cell(Some(px(110.))).justify_end().child("Actions"))
+    ui::table_header(cx)
+        .child(ui::cell(Some(GROUP_KEY_COLUMN)).child("Variable"))
+        .child(ui::cell(None).child("Value"))
+        .child(ui::cell(Some(TYPE_COLUMN)).child("Type"))
+        .child(ui::cell(Some(STATE_COLUMN)).child("State"))
+        .child(
+            ui::cell(Some(ACTIONS_COLUMN))
+                .justify_end()
+                .child("Actions"),
+        )
         .into_any_element()
-}
-
-/// 单元格：固定宽度的列不参与伸缩，`None` 的列独占剩余空间。
-fn cell(width: Option<Pixels>) -> Div {
-    let cell = div().h_flex().items_center().px(px(6.)).py(px(3.));
-    match width {
-        Some(width) => cell.w(width).flex_shrink_0(),
-        None => cell.flex_1().min_w_0(),
-    }
 }
 
 fn render_variable_form(

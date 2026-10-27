@@ -35,7 +35,8 @@ use gpui_kit::component::{ActiveTheme, Icon};
 gpui_kit::assets::icon_assets!(
     ExtraIcons,
     [
-        Clock, Columns2, FolderPlus, ListPlus, Pencil, Quote, SearchX, Trash, Type, Variable
+        Clock, Columns2, FileUp, FolderPlus, ListPlus, Pencil, Quote, SearchX, Trash, Type,
+        Variable
     ]
 );
 
@@ -84,13 +85,19 @@ pub enum AppIcon {
     // 目的地与外壳
     ModuleFonts,
     ModuleEnvironment,
+    ModuleTraffic,
     // 导航的折叠与展开是两个动作，所以是两个语义——图标要能预告点下去的结果。
     CollapseNavigation,
     ExpandNavigation,
+    // 正文树的节点开关：同样按动作命名，方向跟着「点下去会发生什么」。
+    ShowChildren,
+    HideChildren,
     // 通用操作
     Add,
     /// 把当前字体加进对比集合：是「追加到列表」，不是「新建一个东西」。
     AddToCompare,
+    /// 从磁盘导入一份抓包日志。
+    Import,
     Refresh,
     Search,
     NoResults,
@@ -123,10 +130,14 @@ impl AppIcon {
     pub const ALL: &'static [AppIcon] = &[
         AppIcon::ModuleFonts,
         AppIcon::ModuleEnvironment,
+        AppIcon::ModuleTraffic,
         AppIcon::CollapseNavigation,
         AppIcon::ExpandNavigation,
+        AppIcon::ShowChildren,
+        AppIcon::HideChildren,
         AppIcon::Add,
         AppIcon::AddToCompare,
+        AppIcon::Import,
         AppIcon::Refresh,
         AppIcon::Search,
         AppIcon::NoResults,
@@ -159,12 +170,19 @@ impl AppIcon {
             // 目的地用领域符号，不用泛化的面板图标。
             Self::ModuleFonts => Target::Builtin(IconName::Type),
             Self::ModuleEnvironment => Target::Builtin(IconName::Variable),
+            // 网络流量用拓扑图标，比 Globe（外网）或 Activity（活动）更贴近「抓包」。
+            Self::ModuleTraffic => Target::Builtin(IconName::Network),
             // 图标要预告点下去会发生什么：折叠态与展开态是两个动作，给两个方向。
             Self::CollapseNavigation => Target::Builtin(IconName::PanelLeftClose),
             Self::ExpandNavigation => Target::Builtin(IconName::PanelLeftOpen),
+            // 右侧是「还有子节点」，向下是「已经展开」。
+            Self::ShowChildren => Target::Builtin(IconName::ChevronRight),
+            Self::HideChildren => Target::Builtin(IconName::ChevronDown),
             // 通用操作。
             Self::Add => Target::Builtin(IconName::Plus),
             Self::AddToCompare => Target::Builtin(IconName::ListPlus),
+            // 导入是「从外部带进来」，不是新建，用文件向上箭头而不是加号。
+            Self::Import => Target::Builtin(IconName::FileUp),
             Self::Refresh => Target::Builtin(IconName::RefreshCw),
             Self::Search => Target::Builtin(IconName::Search),
             // 「搜了但没命中」和「搜索框」要能区分开。
@@ -223,14 +241,22 @@ impl AppIcon {
         }
     }
 
+    /// 角色对应的主题色；`Neutral` 返回 `None`，由调用方继承当前前景色。
+    /// 颜色只在这里被解析一次，图标表本身仍然不存色值。
+    pub fn role_color(self, cx: &gpui_kit::App) -> Option<gpui_kit::Hsla> {
+        match self.role() {
+            Role::Neutral => None,
+            Role::Danger => Some(cx.theme().danger),
+            Role::Warning => Some(cx.theme().warning),
+        }
+    }
+
     /// 带后果色的图标元素。主题色要 `cx` 才能取到，所以这层无法并进
     /// `From<AppIcon> for Icon`——那条路只能给形状，颜色得由调用点所在的主题决定。
     pub fn icon_in(self, cx: &gpui_kit::App) -> Icon {
-        let icon = self.icon();
-        match self.role() {
-            Role::Neutral => icon,
-            Role::Danger => icon.text_color(cx.theme().danger),
-            Role::Warning => icon.text_color(cx.theme().warning),
+        match self.role_color(cx) {
+            Some(color) => self.icon().text_color(color),
+            None => self.icon(),
         }
     }
 }
@@ -298,7 +324,7 @@ mod tests {
     /// ALL 必须覆盖每个变体；内置图形之间不允许同形不同义（要重复得有意识地确认）。
     #[test]
     fn all_lists_every_variant_and_builtin_shapes_are_distinct() {
-        assert_eq!(AppIcon::ALL.len(), 27, "增删 AppIcon 变体时同步这条断言");
+        assert_eq!(AppIcon::ALL.len(), 31, "增删 AppIcon 变体时同步这条断言");
         let mut paths: Vec<String> = AppIcon::ALL
             .iter()
             .filter_map(|icon| match icon.target() {
@@ -359,16 +385,15 @@ mod tests {
         assert_eq!(AppIcon::Brand.role(), Role::Neutral);
     }
 
-    /// 表里只允许出现角色，不允许出现具体色值——颜色归主题。
-    /// 将来有人想加 `Role::Custom("#ff0000")` 会先撞上这条。
+    /// 危险色是稀缺信号：任何时刻只允许一个语义图标是 Danger。
+    /// 这条比逐条断言更难糊弄——新增图标误标 Danger 会直接红。
     #[test]
-    fn roles_carry_no_colours() {
-        for role in [Role::Neutral, Role::Danger, Role::Warning] {
-            let text = format!("{role:?}");
-            assert!(
-                !text.contains('#') && !text.contains("rgb"),
-                "Role 不该携带具体颜色：{text}"
-            );
-        }
+    fn only_delete_is_dangerous() {
+        let dangerous: Vec<AppIcon> = AppIcon::ALL
+            .iter()
+            .copied()
+            .filter(|icon| icon.role() != Role::Neutral)
+            .collect();
+        assert_eq!(dangerous, [AppIcon::Delete]);
     }
 }

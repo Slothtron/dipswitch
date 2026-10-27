@@ -14,7 +14,6 @@ use gpui_kit::{
     base::StyledExt,
     component::{
         ActiveTheme, Icon, Sizable, Theme, ThemeMode, TitleBar,
-        button::{Button, ButtonVariants},
         sidebar::{Sidebar, SidebarMenu, SidebarMenuItem},
         status_bar::StatusBar,
         switch::Switch,
@@ -27,15 +26,21 @@ use crate::{
     fonts_view::FontsModule,
     icon::AppIcon,
     settings::{self, Settings},
+    traffic_view::TrafficModule,
+    ui,
 };
 
 pub const FONTS_MODULE: &str = "fonts";
 pub const ENVIRONMENT_MODULE: &str = "environment";
+pub const TRAFFIC_MODULE: &str = "traffic";
 
 /// 工作台层的快捷键上下文；模块自己的绑定仍留在模块容器上。
 pub const KEY_CONTEXT: &str = "Dipswitch";
 
-actions!(dipswitch, [ShowFonts, ShowEnvironment, ToggleNavigation]);
+actions!(
+    dipswitch,
+    [ShowFonts, ShowEnvironment, ShowTraffic, ToggleNavigation]
+);
 
 /// 标题栏整体是系统的 HTCAPTION 拖拽区：按下会被 WndProc 交给窗口移动的模态
 /// 循环，控件只能收到按下、收不到抬起，点击永远不触发。控件在自己的按下事件里
@@ -49,16 +54,18 @@ fn intercept_title_bar_press(_: &MouseDownEvent, _: &mut Window, cx: &mut App) {
 pub enum Module {
     Fonts,
     Environment,
+    Traffic,
 }
 
 impl Module {
-    pub const ALL: [Self; 2] = [Self::Fonts, Self::Environment];
+    pub const ALL: [Self; 3] = [Self::Fonts, Self::Environment, Self::Traffic];
 
     /// 持久化用的稳定标识。
     pub fn key(self) -> &'static str {
         match self {
             Self::Fonts => FONTS_MODULE,
             Self::Environment => ENVIRONMENT_MODULE,
+            Self::Traffic => TRAFFIC_MODULE,
         }
     }
 
@@ -66,6 +73,7 @@ impl Module {
     pub fn parse(key: &str) -> Self {
         match key {
             ENVIRONMENT_MODULE => Self::Environment,
+            TRAFFIC_MODULE => Self::Traffic,
             _ => Self::Fonts,
         }
     }
@@ -74,6 +82,7 @@ impl Module {
         match self {
             Self::Fonts => "Fonts".into(),
             Self::Environment => "Environment".into(),
+            Self::Traffic => "Traffic".into(),
         }
     }
 
@@ -81,6 +90,7 @@ impl Module {
         match self {
             Self::Fonts => AppIcon::ModuleFonts,
             Self::Environment => AppIcon::ModuleEnvironment,
+            Self::Traffic => AppIcon::ModuleTraffic,
         }
     }
 }
@@ -90,6 +100,7 @@ pub struct Dipswitch {
     nav_collapsed: bool,
     fonts: Entity<FontsModule>,
     environment: Entity<EnvironmentModule>,
+    traffic: Entity<TrafficModule>,
     configuration_error: Option<String>,
 }
 
@@ -100,16 +111,26 @@ impl Dipswitch {
         window: &mut Window,
         cx: &mut Context<Self>,
         configuration_error: Option<String>,
+        initial_capture: Option<std::path::PathBuf>,
     ) -> Self {
         let settings = cx.global::<Settings>().clone();
         let fonts = cx.new(|cx| FontsModule::new(window, cx));
         let environment = cx.new(|cx| EnvironmentModule::new(window, cx));
+        let traffic = cx.new(|cx| TrafficModule::new(window, cx));
+        if let Some(path) = initial_capture.as_ref() {
+            traffic.update(cx, |module, cx| module.open_path(path.clone(), window, cx));
+        }
 
         Self {
-            active: Module::parse(&settings.active_module),
+            active: if initial_capture.is_some() {
+                Module::Traffic
+            } else {
+                Module::parse(&settings.active_module)
+            },
             nav_collapsed: settings.nav_collapsed,
             fonts,
             environment,
+            traffic,
             configuration_error,
         }
     }
@@ -141,6 +162,7 @@ impl Dipswitch {
         match self.active {
             Module::Fonts => self.fonts.read(cx).status_text(cx),
             Module::Environment => self.environment.read(cx).status_text(),
+            Module::Traffic => self.traffic.read(cx).status_text(),
         }
     }
 
@@ -150,6 +172,7 @@ impl Dipswitch {
         match self.active {
             Module::Fonts => FontsModule::status_hint(),
             Module::Environment => self.environment.read(cx).status_hint(),
+            Module::Traffic => self.traffic.read(cx).status_hint(),
         }
     }
 
@@ -179,21 +202,22 @@ impl Dipswitch {
                         .items_center()
                         .on_mouse_down(MouseButton::Left, intercept_title_bar_press)
                         .child(
-                            Button::new("toggle-navigation")
-                                .ghost()
-                                .small()
+                            ui::icon_button(
+                                "toggle-navigation",
                                 // 图标跟着状态走：折叠态给「展开」方向，反之亦然。
-                                .icon(if self.nav_collapsed {
+                                if self.nav_collapsed {
                                     AppIcon::ExpandNavigation
                                 } else {
                                     AppIcon::CollapseNavigation
-                                })
-                                .tooltip(if self.nav_collapsed {
-                                    "Show navigation"
-                                } else {
-                                    "Hide navigation"
-                                })
-                                .on_click(cx.listener(|this, _, _, cx| this.toggle_navigation(cx))),
+                                },
+                                cx,
+                            )
+                            .tooltip(if self.nav_collapsed {
+                                "Show navigation"
+                            } else {
+                                "Hide navigation"
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_navigation(cx))),
                         ),
                 )
                 .child(
@@ -260,6 +284,9 @@ impl Dipswitch {
             Module::Environment => self.environment.update(cx, |module, cx| {
                 module.render(window, cx).into_any_element()
             }),
+            Module::Traffic => self.traffic.update(cx, |module, cx| {
+                module.render(window, cx).into_any_element()
+            }),
         }
     }
 
@@ -269,6 +296,10 @@ impl Dipswitch {
 
     fn on_show_environment(&mut self, _: &ShowEnvironment, _: &mut Window, cx: &mut Context<Self>) {
         self.select(Module::Environment, cx);
+    }
+
+    fn on_show_traffic(&mut self, _: &ShowTraffic, _: &mut Window, cx: &mut Context<Self>) {
+        self.select(Module::Traffic, cx);
     }
 
     fn on_toggle_navigation(
@@ -308,6 +339,7 @@ impl Render for Dipswitch {
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_show_fonts))
             .on_action(cx.listener(Self::on_show_environment))
+            .on_action(cx.listener(Self::on_show_traffic))
             .on_action(cx.listener(Self::on_toggle_navigation))
             .size_full()
             .v_flex()
@@ -343,6 +375,7 @@ impl Focusable for Dipswitch {
         match self.active {
             Module::Fonts => self.fonts.focus_handle(cx),
             Module::Environment => self.environment.focus_handle(cx),
+            Module::Traffic => self.traffic.focus_handle(cx),
         }
     }
 }

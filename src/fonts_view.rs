@@ -37,9 +37,16 @@ use crate::{
     icon::AppIcon,
     settings::{self, LATIN_SAMPLE, PreviewBackground, SamplePreset, Settings},
     size_slider::SizeSlider,
+    ui,
 };
 
 pub const KEY_CONTEXT: &str = "FontManager";
+
+/// 预览里的三级样张字号，与偏好里的「预览字号」互不影响：
+/// 72 看字形轮廓，18 看字母表，16 看元数据区的紧凑样张。
+const SPECIMEN_GLYPH_SIZE: f32 = 72.0;
+const SPECIMEN_ALPHABET_SIZE: f32 = 18.0;
+const SPECIMEN_METADATA_SIZE: f32 = 16.0;
 
 actions!(fonts, [CopyFamilyName, FocusSearch, RefreshFonts]);
 
@@ -999,22 +1006,23 @@ impl FontsModule {
                             ),
                     )
                     .child(
-                        Button::new("favorite-font")
-                            .ghost()
-                            .small()
-                            .icon(if is_favorite {
+                        ui::icon_button(
+                            "favorite-font",
+                            if is_favorite {
                                 AppIcon::FavoriteOn
                             } else {
                                 AppIcon::Favorite
-                            })
-                            .tooltip(if is_favorite {
-                                "Remove from favorites"
-                            } else {
-                                "Add to favorites"
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_favorite(window, cx);
-                            })),
+                            },
+                            cx,
+                        )
+                        .tooltip(if is_favorite {
+                            "Remove from favorites"
+                        } else {
+                            "Add to favorites"
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_favorite(window, cx);
+                        })),
                     ),
             )
             .child(
@@ -1360,7 +1368,7 @@ impl FontsModule {
             .child(
                 div()
                     .font(face_font.clone())
-                    .text_size(px(72.0))
+                    .text_size(px(SPECIMEN_GLYPH_SIZE))
                     .text_color(colors.fg)
                     .child("Aa"),
             )
@@ -1374,7 +1382,7 @@ impl FontsModule {
             .child(
                 div()
                     .font(face_font)
-                    .text_size(px(18.0))
+                    .text_size(px(SPECIMEN_ALPHABET_SIZE))
                     .text_color(colors.muted)
                     .child("ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789"),
             )
@@ -1632,20 +1640,14 @@ impl FontsModule {
                             ),
                     )
                     .child(
-                        Button::new(copy_id)
-                            .ghost()
-                            .small()
-                            .icon(AppIcon::Copy)
+                        ui::row_icon_button(copy_id, AppIcon::Copy, cx)
                             .tooltip("Copy name")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.copy_compare_entry(&copy_entry, window, cx);
                             })),
                     )
                     .child(
-                        Button::new(remove_id)
-                            .ghost()
-                            .small()
-                            .icon(AppIcon::Remove)
+                        ui::row_icon_button(remove_id, AppIcon::Remove, cx)
                             .tooltip("Remove from comparison")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.remove_compare_entry(&remove_key, cx);
@@ -1672,7 +1674,7 @@ impl FontsModule {
                     .child(
                         div()
                             .font(face_font)
-                            .text_size(px(16.0))
+                            .text_size(px(SPECIMEN_METADATA_SIZE))
                             .text_color(colors.muted)
                             .child(
                                 "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789",
