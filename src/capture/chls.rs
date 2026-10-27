@@ -523,6 +523,7 @@ fn entry_for(graph: &Graph<'_>, transaction: &NewObject, budget: &mut BodyBudget
         url,
         status: if note.is_some() { None } else { status },
         note,
+        protocol: None,
         mime,
         size,
         duration_ms,
@@ -595,9 +596,13 @@ fn java_body(
     }
     let wire_len = bytes.len();
     let raw: Vec<u8> = bytes.iter().map(|byte| *byte as u8).collect();
-    let raw = match decode_content_encoding(raw, encoding) {
+    let raw = match decode_content_encoding(&raw, encoding) {
         Ok(raw) => raw,
-        Err(()) => return Some(binary_body(wire_len, mime)),
+        // 解不开就留着线上字节：至少 Hex 视图还能看出这是什么内容。
+        Err(()) => {
+            let prefix = &raw[..raw.len().min(BODY_PREVIEW_BYTES)];
+            return Some(binary_body(prefix, wire_len, mime));
+        }
     };
     let len = raw.len();
     let preview_len = len.min(BODY_PREVIEW_BYTES).min(budget.remaining);
@@ -607,10 +612,10 @@ fn java_body(
         // 只有「我们自己把多字节字符截断」时才接受前缀；正文里出现非法字节
         // 说明它根本不是 UTF-8（例如压缩数据），按二进制处理。
         Err(error) if preview_len < len && error.error_len().is_none() => error.valid_up_to(),
-        Err(_) => return Some(binary_body(len, mime)),
+        Err(_) => return Some(binary_body(prefix, len, mime)),
     };
     if valid == 0 {
-        return Some(binary_body(len, mime));
+        return Some(binary_body(prefix, len, mime));
     }
     let text = std::str::from_utf8(&prefix[..valid]).ok()?;
     let allowed = budget.take(text.len());
@@ -619,33 +624,36 @@ fn java_body(
         size: Some(len as u64),
         truncated: allowed < len,
         binary: false,
+        bytes: None,
         mime: mime.to_string(),
     })
 }
 
-fn binary_body(size: usize, mime: &str) -> Body {
+/// 二进制正文：没有文本预览，但原始字节留着，Hex 视图靠它。
+fn binary_body(prefix: &[u8], size: usize, mime: &str) -> Body {
     Body {
         preview: None,
         size: Some(size as u64),
-        truncated: false,
+        truncated: prefix.len() < size,
         binary: true,
+        bytes: Some(prefix.to_vec()),
         mime: mime.to_string(),
     }
 }
 
 /// 按 `Content-Encoding` 解压正文。没有编码原样返回；编码认得但解不开时
 /// 交给调用方按二进制显示，不把乱码当文本。
-fn decode_content_encoding(bytes: Vec<u8>, encoding: Option<&str>) -> Result<Vec<u8>, ()> {
+fn decode_content_encoding(bytes: &[u8], encoding: Option<&str>) -> Result<Vec<u8>, ()> {
     let Some(encoding) = encoding else {
-        return Ok(bytes);
+        return Ok(bytes.to_vec());
     };
     let encoding = encoding.to_ascii_lowercase();
     let reader: Box<dyn Read> = if encoding.contains("gzip") {
-        Box::new(GzDecoder::new(bytes.as_slice()))
+        Box::new(GzDecoder::new(bytes))
     } else if encoding.contains("deflate") {
-        Box::new(ZlibDecoder::new(bytes.as_slice()))
+        Box::new(ZlibDecoder::new(bytes))
     } else {
-        return Ok(bytes);
+        return Ok(bytes.to_vec());
     };
     let mut decoded = Vec::new();
     reader
@@ -698,7 +706,7 @@ mod tests {
         encoder.write_all(b"<html>ok</html>").expect("write gzip");
         let gzipped = encoder.finish().expect("finish gzip");
         assert_eq!(
-            decode_content_encoding(gzipped, Some("gzip")).expect("gzip decodes"),
+            decode_content_encoding(&gzipped, Some("gzip")).expect("gzip decodes"),
             b"<html>ok</html>"
         );
 
@@ -707,16 +715,16 @@ mod tests {
         encoder.write_all(b"hello").expect("write deflate");
         let deflated = encoder.finish().expect("finish deflate");
         assert_eq!(
-            decode_content_encoding(deflated, Some("deflate")).expect("deflate decodes"),
+            decode_content_encoding(&deflated, Some("deflate")).expect("deflate decodes"),
             b"hello"
         );
 
         assert!(
-            decode_content_encoding(vec![0x1f, 0x8b, 0xff], Some("gzip")).is_err(),
+            decode_content_encoding(&[0x1f, 0x8b, 0xff], Some("gzip")).is_err(),
             "标注了 gzip 但解不开时要交给二进制分支"
         );
         assert_eq!(
-            decode_content_encoding(vec![1, 2, 3], None).expect("no encoding"),
+            decode_content_encoding(&[1, 2, 3], None).expect("no encoding"),
             vec![1, 2, 3]
         );
     }
@@ -730,6 +738,11 @@ mod tests {
         assert!(body.binary);
         assert_eq!(body.preview, None);
         assert_eq!(body.size, Some(4));
+        assert_eq!(
+            body.bytes.as_deref(),
+            Some(&[0x1f_u8, 0x8b, 0x08, 0x00][..]),
+            "二进制正文要留下原始字节，Hex 视图靠它"
+        );
     }
 
     #[test]

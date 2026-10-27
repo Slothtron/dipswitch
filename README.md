@@ -39,10 +39,14 @@
 - **导入四种抓包文件**：浏览器 / DevTools 导出的 HAR（JSON）、Charles 的 JSON Session（`.chlsj`）、XML Session（`.chls`），以及 Charles 的二进制 Session（`.chls`，Java 对象序列化流）。**同名 `.chls` 有两种编码**，所以格式按内容嗅探（`{` / `[` / `<` / `AC ED`），扩展名只用于提示，不改判。文件读取与解析在后台线程，导入大文件不会卡住界面（实测 5.8 MB / 309 条约 0.1 s）。
 - **两种导入入口**：工具栏 `Import…` 打开系统文件对话框，默认过滤 `*.har;*.chls;*.chlsj;*.xml`；也可以把文件直接拖进 Traffic 内容区（空白页或已有会话上都可以替换导入）。
 - **请求表**：Status / Method / Path / Size / Time 五列，路径只显示 path（query 参数在详情里看，不把长查询串挤进列表）；`Time` 是请求开始的时刻，按**本机时区**显示，和 Charles / 浏览器的读数一致；状态码按 2xx / 3xx / 4xx / 5xx 分色，Charles 的失败会话显示 `Failed` 并保留原因。表格是虚拟列表，滚动句柄在多次渲染之间复用，几万条也只渲染可见行。**列宽可拖拽**（每个表头右缘），只在本次会话有效，不落库；Path 默认吃掉整行宽度，窗口变窄时允许收缩。
-- **过滤**：按 URL、方法、状态码、主机名或失败原因过滤；结果计数显示在右上角。
-- **右侧详情浮层**：**默认不打开**，双击某条请求才从右侧展开（宽 560px）；详情浮层不参与列表宽度分配，打开/关闭都不会压缩列表列宽，浮层覆盖的那块区域也不再接收鼠标事件（在里面滚轮不会带着列表滚，被盖住的行点不到）。已经打开时，单击别的行直接切换内容；`Esc` 或浮层右上角的关闭按钮收起。Overview 是 URL / 状态 / 方法 / 协议 / 类型 / 大小 / 耗时 / 起始时间 / 远端地址 / 参数数量，起始时间带本机时区偏移；Request 与 Response 按「查询参数 → 头部 → 正文」上下分区。
+- **过滤**：搜索框按 URL、方法、状态码、主机名或失败原因过滤；搜索框下面是一行**状态类 chip**（`All / 2xx / 3xx / 4xx / 5xx / Failed`），每个 chip 后面带当前命中数，点一下只看那一类。过滤在数据源层做，虚拟列表的高度跟着过滤结果重算；结果计数显示在右上角。
+- **详情浮层**：**默认不打开**，双击某条请求才展开。宽窗口（≥ 1100px）从右侧展开（宽 560px），窄窗口（< 1100px）改成**底部通栏**（高 420px，请求在左、响应在右并排），列表不再被盖住。浮层不参与列表宽度分配，打开/关闭都不会压缩列表列宽，覆盖的那块区域也不再接收鼠标事件（在里面滚轮不会带着列表滚，被盖住的行点不到）。已经打开时，单击别的行直接切换内容；`Esc` 或浮层右上角的关闭按钮收起。
+- **详情分请求段与响应段**：请求段与响应段上下（窄窗口时左右）各成一段，各带自己的标签栏、各自独立滚动。请求段的标签是 Overview / Params (n) / Headers (n) / Body，右端挂方法徽标；响应段的标签是 Headers (n) / Body，右端挂协议与状态码徽标。标签按内容出现：没有正文就没有 Body，没有查询串就没有 Params。
+- **URL 单独一行**：浮层顶部是这次请求的完整 URL，等宽体、链接色、**不截断**（长了就折行），点它交给系统默认浏览器打开，右边一个复制按钮。URL 是这次请求的身份，其余字段都能由它推出。
+- **浮层里翻上一条 / 下一条**：浮层头部有上一条 / 下一条两个按钮，直接换到相邻请求，浮层不关、列表选中态跟着走。一份会话动辄几百条，靠回列表点行翻要几十次往返。
+- **Overview 是一张事实表**：状态 / 方法 / 协议 / 类型 / 大小 / 耗时 / 起始时间 / 远端地址 / 参数数量，起始时间带本机时区偏移；「基本」与「来源」两组，后者可折叠。
 - **详情用表格读**：每个分区是一条表头带（标题 + 计数 + 整段复制），下面一行一条记录，与主表同一套底色、单元格、分隔线与悬停；键列固定宽度，值列吃掉剩余宽度并单行截断，**每行末尾一个复制按钮**取完整值（长 cookie / token 不换行也不丢）。JSON Tree 的展开态同样落在这两列上，缩进进键列，值列保持对齐。
-- **正文格式化**：JSON 提供 Pretty / Tree / Raw，Pretty 按语法着色（成员名用前景色，字符串 / 数字 / 布尔 / null 沿用 Tree 的那套主题色），Tree 按节点展开（默认只铺第一层）；`application/x-www-form-urlencoded` 提供 Form 键值表与 Raw；其他类型显示 Raw。预览只保留 64 KiB，截断时会写明实际展示长度。
+- **正文格式化**：JSON 提供 Pretty / Tree / Raw / Hex，Pretty 按语法着色（成员名用前景色，字符串 / 数字 / 布尔 / null 沿用 Tree 的那套主题色），Tree 按节点展开（默认只铺第一层）；`application/x-www-form-urlencoded` 提供 Form 键值表与 Raw / Hex；其他类型显示 Raw / Hex。**二进制正文有 Hex 兜底**（偏移 + 两列 16 进制 + ASCII 侧栏），不再是一片空白。预览只保留 64 KiB，截断时会写明实际展示长度。
 - **压缩正文**：Charles 二进制会话保存的是线上原始字节，`Content-Encoding: gzip / deflate` 的响应会先解压再展示（解压上限 64 MiB，防压缩炸弹）；解不开或本来就是二进制的只标大小，不展示乱码。
 - **边界**：单个文件 ≤ 256 MB、最多导入 50,000 条请求；单个正文预览 ≤ 64 KiB、整份日志正文预览合计 ≤ 32 MiB。超限会如实提示，不静默截断。Charles 的失败会话保留异常原文（如 TLS 握手失败、DNS 解析失败），显示在 Overview 的 Status 行。
 - **不落库**：抓包内容只在本次会话里，关闭应用即释放；配置库里只保存长期偏好，不保存报文。
@@ -136,7 +140,7 @@ src/
 ├─ capture/tests.rs  文本格式的夹具与解析断言
 ├─ capture/fixtures/minimal.chls  合成的二进制会话夹具（2.5 KB，无真实报文）
 ├─ highlight.rs      JSON 语法分词：给出「哪一段是什么」，颜色由视图决定（纯逻辑）
-├─ traffic_view.rs   Traffic 模块（导入 / 拖拽 / 虚拟列表 / 右侧详情表格 / 正文格式化）
+├─ traffic_view.rs   Traffic 模块（导入 / 拖拽 / 虚拟列表 / 请求段·响应段双分区详情 / 正文格式化）
 ├─ env_model.rs      分层解析：谁覆盖谁、基线何时记录、停用恢复什么（纯逻辑）
 ├─ env_service.rs    把解析结果落到环境与数据库（能力缝 EnvBackend）
 ├─ system_env.rs     平台适配：HKCU\Environment 读写 + 广播 / 进程环境回退
@@ -177,7 +181,9 @@ examples/canvas_probe.rs 自绘画布探针：节点用 absolute div、连线用
 
 **Pretty 的高亮是自己分词，不是 tree-sitter。** gpui-component 的 `highlighter` 模块在默认特性下是空实现（`wasm_stub`，`styles()` 只返回一段默认样式），打开它的 `tree-sitter` 特性要给依赖树加 tree-sitter 运行时和一次 C 编译，而这里只需要 JSON 一种语言。所以 `highlight.rs` 手写一个 JSON 扫描器返回 `(Range, Token)`，视图把 Token 映射成主题色后交给 `StyledText::with_highlights`。残缺输入（正文被截断）也在这条路上测掉了。
 
-**Traffic 的列表与详情是两条独立的滚动链。** `v_virtual_list` 每次渲染都会新建 scroll handle，必须由视图持有一份并用 `.track_scroll()` 重新挂回去，否则滚一格、下一帧就弹回顶部；列表外面那层拖拽区必须是 flex 容器，普通 block 包裹层会掐断 `flex_1` 链，列表和详情都量成 0 高（这两个坑都实测过）。详情是 `absolute` 定位的右侧浮层，不参与列表列宽分配：默认关闭，双击行打开，`Esc` 收起；打开时只覆盖列表右侧，不压缩任何列。列宽由模块持有并为每个表头画一条可拖的边界（`occlude` 保证压在相邻列上也能命中），会话结束即忘。正文按「Query → Headers → Body」上下分区；Body 的 Pretty / Tree / Form / Raw 由 MIME + 内容决定，Tree 只铺第一层、按路径记录展开状态，换一条请求就清空。长 cookie / token 在头部与参数表里单行截断，否则没有断点的长串会把详情撑出面板。浮层根 `.occlude()`：GPUI 的滚轮分发会把命中路径上**所有**可滚动节点各自处理一遍，不声明遮挡就会「在浮层里滚、底下列表跟着滚」。
+**Traffic 的列表与详情是两条独立的滚动链。** `v_virtual_list` 每次渲染都会新建 scroll handle，必须由视图持有一份并用 `.track_scroll()` 重新挂回去，否则滚一格、下一帧就弹回顶部；列表外面那层拖拽区必须是 flex 容器，普通 block 包裹层会掐断 `flex_1` 链，列表和详情都量成 0 高（这两个坑都实测过）。详情在宽窗口里是 `absolute` 定位的右侧浮层，不参与列表列宽分配：默认关闭，双击行打开，`Esc` 收起；打开时只覆盖列表右侧，不压缩任何列。窄窗口（< 1100px）改成底部通栏，请求在左、响应在右并排。列宽由模块持有并为每个表头画一条可拖的边界（`occlude` 保证压在相邻列上也能命中），会话结束即忘。详情分**请求段 / 响应段**两段，各段自带标签栏与独立滚动：请求段 Overview / Params (n) / Headers (n) / Body，响应段 Headers (n) / Body，标签按内容出现。Body 的 Pretty / Tree / Form / Raw / Hex 由 MIME + 内容决定，Tree 只铺第一层、按路径记录展开状态，换一条请求就清空。长 cookie / token 在头部与参数表里单行截断，否则没有断点的长串会把详情撑出面板。浮层根 `.occlude()`：GPUI 的滚轮分发会把命中路径上**所有**可滚动节点各自处理一遍，不声明遮挡就会「在浮层里滚、底下列表跟着滚」。
+
+**并排的两段要显式 `items_stretch()`。** gpui-base 的 `h_flex()` 是 `flex_row().items_center()`——它在交叉轴上**居中**，不是拉伸。于是两段各自按内容高度居中：高的一段上下溢出被裁、低的一段悬在中间，两段都读不全。`v_flex()` 不装对齐（children 自然拉伸），所以上下堆叠那一版不受影响。窄窗口下请求 / 响应并排必须自己补 `items_stretch()`。
 
 **时间只存绝对时刻，换算放在视图层。** 会话里的时间戳（二进制是 `java.util.Date` 的 epoch 毫秒，HAR / Charles JSON 自带偏移）统一成 RFC 3339 存进 `Entry.started`，界面再用 `chrono::Local` 渲染成本机时区——直接印 UTC 会比 Charles 的读数差一个时区。耗时口径跟 Charles：从请求开始写出（`requestBeginTime`）量到响应结束，不含建连那 1ms，缺字段才回落到事务起止。
 
@@ -228,7 +234,7 @@ env_event(id PK, at, detail)                             启用/停用/覆盖/�
 cargo fmt --check              通过
 cargo check --all-targets      通过
 cargo clippy --all-targets     0 warning
-cargo test                     78 passed + 1 ignored（真实注册表探针）
+cargo test                     84 passed + 1 ignored（真实注册表探针）
 cargo build --release          通过
 
 # 资源侧核对：rc.exe 把 PNG 型 ICO 条目的负载原样存进 RT_ICON，所以在 exe 里逐档搜
@@ -247,6 +253,7 @@ cargo build --release          通过
 - **界面语汇**：计数文案只在 1 时用单数（0 与 N 用复数），避免 “1 variables”。
 - **抓包解析**：HAR 的 query / headers / postData 参数 / base64 正文；Charles JSON 的 URL 拼装、失败会话原因、非默认端口；Charles XML 的命名空间前缀、实体引用、CDATA、base64 二进制正文与默认端口省略；Charles 二进制会话的合成夹具（对象图、HTTP/1 first-line、HTTP/2 `:status`、时间与远端地址）；未知格式与 ZIP 归档给出可操作的错误；状态码分类与条目上限截断；路径与查询串拆分、百分号解码；gzip / deflate 解压与「标注了编码但解不开」的二进制分支；非法 UTF-8 不会被当成空白正文。
 - **正文视图**：JSON 才有 Pretty / Tree，urlencoded 才有 Form；JSON 被截断时只提供 Raw；Tree 默认只铺第一层、按路径展开；Pretty 的缩进格式；非法 JSON 不冒充可格式化。
+- **详情与筛选**：状态类过滤只命中自己那一类（2xx chip 不会漏掉 4xx）；Hex 转储有行数上限（一次最多 1024 行）；长 URL 在分隔符处折行而不是被截断；时间按本机时区渲染，认不出的时间戳原样显示而不是留白。
 - **平台适配**：`REG_SZ` / `REG_EXPAND_SZ` / `REG_MULTI_SZ` 的字节级编解码往返（含 `%`、空格、分号），不支持的类型不会被当字符串读出。
 - **真实注册表探针**（`cargo test -- --ignored`）：写一个 `DIPSWITCH_SELFTEST_PROBE` 探针 key → 读回校验类型与值 → 确认当前进程可见 → 删除并确认清走。默认不跑，因为它真的会动 `HKCU\Environment` 并广播一次 `WM_SETTINGCHANGE`。
 
@@ -259,6 +266,8 @@ cargo build --release          通过
 - Traffic 右侧详情（Computer Use 实测）：默认关闭；单击只高亮、不打开；双击后浮层从右侧展开且列位置不变（列表宽度不被压缩）；`Esc` 与关闭按钮都能收起，已打开时单击别的行直接切换；列表滚轮可滚动多行且不弹回顶部；表头边界拖拽可改列宽（Status 与 Path 实测），重启后回到默认；Request 的 Query Parameters / Headers / Body 分区与 19 个头部完整显示；Response 的 gzip HTML 正文解压后可读，JSON 请求体的 Pretty / Tree / Raw 切换正常；系统文件对话框的过滤项显示为 `Capture logs (*.har;*.chls;*.chlsj;*.xml)`，选中文件后能完成导入；
 - Traffic 时间与浮层滚动（Computer Use 实测，真实 Charles 二进制会话 309 条）：列表 `Time` 与详情 `Started` 的读数与 Charles 一致（`12:30:29` / `2026-10-26 12:30:29.883 +08:00`），耗时同为 `472 ms`；在浮层内滚滚轮只有详情内容动、列表保持原位，滚轮移到列表区域才滚动列表，浮层收起后列表仍占满宽度；
 - Traffic 详情的表格与高亮（Computer Use 实测，真实 Charles 二进制会话 309 条，浅/深两套主题）：Overview / Query Parameters / Headers 都是「表头带 + 一行一条」的表格，表头带右侧整段复制、每行右侧单个复制，`Set-Cookie`、`canary` 这类长值单行截断不出格；JSON Tree 展开 `Credentials` 后子行缩进进键列、值列仍对齐；Pretty 的成员名、字符串、数字、布尔、null 分别着色，与 Tree 同一套颜色；
+- Traffic 详情分段与筛选（Computer Use 实测，合成会话 6 条）：详情分请求段 / 响应段，两段各带标签栏（`Headers (1)` 带计数）与独立滚动；浮层头部的上一条 / 下一条能在相邻请求间切换且浮层不关；URL 独立成行、链接色、不截断，右侧有打开浏览器与复制两个按钮；请求段右端挂方法徽标、响应段右端挂协议与状态码徽标；状态类 chip 行带命中数，点 `4xx` 只剩 4xx 的行；总览的「来源」分组可折叠；
+- Traffic 窄窗口与二进制正文（Computer Use 实测）：窗口窄于 1100px 时详情改成底部通栏，请求在左、响应在右并排，两段都从通栏顶端开始、各读得全（`h_flex` 默认在交叉轴上居中，必须显式 `items_stretch()`，否则高的一段被裁、低的一段悬在中间）；二进制响应自动落到 Hex 视图，Hex 转储按偏移 + 两列 16 进制 + ASCII 侧栏渲染，截断提示写明「Showing the first 128 B of 172 B; Hex shows the captured bytes only.」；
 - **重启回到原模块**：停在 Environment 后退出并重启，直接落在 Environment（`dipswitch.active_module` 落库生效）；
 - 暗色开关、导航折叠、字体 face 切换、对比、收藏筛选均已验证。
 
@@ -270,10 +279,10 @@ cargo build --release          通过
 - `REG_MULTI_SZ` 只读；`REG_DWORD` 等类型不在本模块管理范围内（列出来只会诱导用户改坏）。
 - 分组启用状态是持久的：应用关闭后分组仍然生效，直到用户停用或删掉分组。没有「退出时自动全部还原」这种隐藏行为。
 - 字体模块不做 CJK/字符覆盖率检测、不安装/卸载字体；对比集合不持久化，最多 4 个。
-- 侧栏宽度不持久化；抓包表的列宽也是会话级（导航折叠状态持久化）。详情浮层固定 480px，打开时会盖住列表右侧一部分，不改变列宽。
+- 侧栏宽度不持久化；抓包表的列宽也是会话级（导航折叠状态持久化）。详情浮层宽 560px（窄窗口改成底部通栏 420px），打开时会盖住列表右侧一部分，不改变列宽。
 - Traffic 支持经典 Charles 会话（XML `.chls` / JSON `.chlsj`）与二进制 Session（Java 序列化 `.chls`）；Charles 的 **native archive（ZIP）** 不是这两种，需先导出成 JSON Session 或 HAR，导入时会给出这条提示。不做 WebSocket / tunnel / HTTP/2 帧的语义解析，正文只保留预览，导入结果也不跨会话保存。
 - 正文里没有断点的超长行（base64、token）会按详情宽度裁掉右侧，没有横向滚动；完整内容可以整段复制。一次拖入多个文件只取第一个。
-- 正文格式化只覆盖 JSON 与 urlencoded 表单，语法高亮也只到 JSON（Pretty）；XML / HTML / JS 走 Raw（gzip/deflate 已解压），不着色。
+- 正文格式化只覆盖 JSON 与 urlencoded 表单，语法高亮也只到 JSON（Pretty）；XML / HTML / JS 走 Raw（gzip/deflate 已解压），不着色；二进制正文只能看 Hex。
 - UIA 里列表项的可访问名称为空（`ListItem::accessibility_label` 已设置，但外层 `ListState` 包装节点未取到名字），属于组件层限制。
 
 ## License

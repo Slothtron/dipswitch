@@ -49,31 +49,111 @@ const ROW_HEIGHT: gpui_kit::Pixels = px(30.);
 /// 560 是「键列 184 + 值列 + 行内复制列」能读下常见头名的最小值。
 const DETAIL_WIDTH: Pixels = px(560.);
 
+/// 窄窗口下详情改成底部通栏，给它的高度。
+const DETAIL_BOTTOM_HEIGHT: Pixels = px(420.);
+
+/// 窗口窄于此值时详情改成底部通栏：560px 的侧栏会盖住列表的路径列，
+/// 而路径是这一列表唯一还剩的信息。
+const NARROW_WINDOW_WIDTH: Pixels = px(1100.);
+
 /// JSON 树一次最多铺多少行：再多的结构用 Raw / Pretty 看更合适。
 const MAX_TREE_ROWS: usize = 1_000;
+
+/// Hex 视图一次最多铺多少行：16 KB 足够看出内容类型，再多就是拖慢滚动。
+const MAX_HEX_ROWS: usize = 1_024;
+
+/// 总览里「来源」这一组的折叠键。
+const SOURCE_GROUP: &str = "source";
+
+/// URL 折行时的目标行长。GPUI 没有断词换行，只能自己在分隔符处切。
+const URL_LINE_WIDTH: usize = 96;
 
 /// 文件选择器里的默认过滤项；内容嗅探才是准绳，这里只帮用户少翻几页。
 const CAPTURE_EXTENSIONS: &[&str] = &["har", "chls", "chlsj", "xml"];
 
 actions!(traffic, [ImportCapture, FocusFilter]);
 
-/// 详情区的三个页签。
+/// 请求段的页签。请求与响应分成两段，每段各管自己的一组证据——
+/// 混在一列里，读者只能靠滚动位置记「我看到哪了」。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PanelTab {
+enum RequestTab {
     Overview,
-    Request,
-    Response,
+    Params,
+    Headers,
+    Body,
 }
 
-impl PanelTab {
-    const ALL: [Self; 3] = [Self::Overview, Self::Request, Self::Response];
+impl RequestTab {
+    const ALL: [Self; 4] = [Self::Overview, Self::Params, Self::Headers, Self::Body];
 
     fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
-            Self::Request => "Request",
-            Self::Response => "Response",
+            Self::Params => "Params",
+            Self::Headers => "Headers",
+            Self::Body => "Body",
         }
+    }
+}
+
+/// 响应段的页签。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseTab {
+    Headers,
+    Body,
+}
+
+impl ResponseTab {
+    const ALL: [Self; 2] = [Self::Headers, Self::Body];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Headers => "Headers",
+            Self::Body => "Body",
+        }
+    }
+}
+
+/// 状态类筛选：与状态码分类一一对应，另加「失败」（没有状态码的条目）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StatusFilter {
+    Success,
+    Redirect,
+    ClientError,
+    ServerError,
+    Failed,
+}
+
+impl StatusFilter {
+    const ALL: [Self; 5] = [
+        Self::Success,
+        Self::Redirect,
+        Self::ClientError,
+        Self::ServerError,
+        Self::Failed,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Success => "2xx",
+            Self::Redirect => "3xx",
+            Self::ClientError => "4xx",
+            Self::ServerError => "5xx",
+            Self::Failed => "Failed",
+        }
+    }
+
+    fn matches(self, entry: &Entry) -> bool {
+        if entry.note.is_some() || entry.status.is_none() {
+            return self == Self::Failed;
+        }
+        matches!(
+            (self, status_class(entry.status)),
+            (Self::Success, StatusClass::Success)
+                | (Self::Redirect, StatusClass::Redirect)
+                | (Self::ClientError, StatusClass::ClientError)
+                | (Self::ServerError, StatusClass::ServerError)
+        )
     }
 }
 
@@ -100,6 +180,8 @@ enum BodyMode {
     Tree,
     Form,
     Raw,
+    /// 二进制的兜底视图：按字节两列 16 进制 + ASCII 侧栏。
+    Hex,
 }
 
 impl BodyMode {
@@ -109,6 +191,7 @@ impl BodyMode {
             Self::Tree => "Tree",
             Self::Form => "Form",
             Self::Raw => "Raw",
+            Self::Hex => "Hex",
         }
     }
 
@@ -118,6 +201,7 @@ impl BodyMode {
             Self::Tree => "tree",
             Self::Form => "form",
             Self::Raw => "raw",
+            Self::Hex => "hex",
         }
     }
 }
@@ -208,7 +292,13 @@ pub struct TrafficModule {
     /// 各列宽度只在本次会话有效，不落库。
     column_widths: [Pixels; 5],
     column_drag: Option<ColumnDrag>,
-    tab: PanelTab,
+    /// 请求段与响应段各有一个页签；两段的证据性质不同，分开翻。
+    request_tab: RequestTab,
+    response_tab: ResponseTab,
+    /// 状态类筛选；`None` 表示不过滤。
+    status_filter: Option<StatusFilter>,
+    /// 折叠起来的分组（总览里的「来源」）。
+    collapsed_groups: HashSet<String>,
     request_mode: Option<BodyMode>,
     response_mode: Option<BodyMode>,
     /// JSON 树里已展开节点的路径；换一条请求就清空。
@@ -244,7 +334,10 @@ impl TrafficModule {
             detail: None,
             column_widths: TrafficColumn::ALL.map(TrafficColumn::default_width),
             column_drag: None,
-            tab: PanelTab::Overview,
+            request_tab: RequestTab::Overview,
+            response_tab: ResponseTab::Headers,
+            status_filter: None,
+            collapsed_groups: HashSet::new(),
             request_mode: None,
             response_mode: None,
             expanded_nodes: HashSet::new(),
@@ -295,6 +388,7 @@ impl TrafficModule {
 
     fn apply_filter(&mut self, cx: &App) {
         let query = self.search.read(cx).value().to_lowercase();
+        let status_filter = self.status_filter;
         self.filtered = self
             .capture
             .as_ref()
@@ -304,7 +398,7 @@ impl TrafficModule {
                     .iter()
                     .enumerate()
                     .filter(|(_, entry)| {
-                        query.is_empty()
+                        let matches_query = query.is_empty()
                             || entry.url.to_lowercase().contains(&query)
                             || entry.method.to_lowercase().contains(&query)
                             || entry
@@ -315,7 +409,11 @@ impl TrafficModule {
                             || entry
                                 .note
                                 .as_deref()
-                                .is_some_and(|note| note.to_lowercase().contains(&query))
+                                .is_some_and(|note| note.to_lowercase().contains(&query));
+                        // 状态类与搜索词是「与」的关系：两个轴各自收敛，再取交集。
+                        let matches_status =
+                            status_filter.is_none_or(|filter| filter.matches(entry));
+                        matches_query && matches_status
                     })
                     .map(|(index, _)| index)
                     .collect()
@@ -337,6 +435,31 @@ impl TrafficModule {
         }
         // 列表换了内容（新文件或新过滤词）就回到顶部，别停在旧位置。
         self.list_scroll.set_offset(Default::default());
+    }
+
+    /// 切换状态类筛选。`None` 表示不过滤。
+    fn set_status_filter(&mut self, filter: Option<StatusFilter>, cx: &mut Context<Self>) {
+        self.status_filter = filter;
+        self.apply_filter(cx);
+        cx.notify();
+    }
+
+    /// 每个状态类在这份会话里各有多少条。chip 上要写这个数。
+    fn filter_counts(&self) -> Vec<(StatusFilter, usize)> {
+        let Some(capture) = self.capture.as_ref() else {
+            return Vec::new();
+        };
+        StatusFilter::ALL
+            .into_iter()
+            .map(|filter| {
+                let count = capture
+                    .entries
+                    .iter()
+                    .filter(|entry| filter.matches(entry))
+                    .count();
+                (filter, count)
+            })
+            .collect()
     }
 
     /// 单击只改高亮；详情已经打开时，单击别的行直接切换内容。
@@ -398,6 +521,29 @@ impl TrafficModule {
         self.request_mode = None;
         self.response_mode = None;
         self.expanded_nodes.clear();
+    }
+
+    /// 当前详情在过滤后列表里的位置与列表长度，用来判断上一条/下一条还有没有。
+    fn detail_position(&self) -> Option<(usize, usize)> {
+        let current = self.detail?;
+        let position = self.filtered.iter().position(|index| *index == current)?;
+        Some((position, self.filtered.len()))
+    }
+
+    /// 在过滤后的列表里前后走一条。浮层不关，只换内容。
+    fn step_detail(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some((position, len)) = self.detail_position() else {
+            return;
+        };
+        let next = position as isize + delta;
+        if next < 0 || next as usize >= len {
+            return;
+        }
+        let next_index = self.filtered[next as usize];
+        self.selected = Some(next_index);
+        self.detail = Some(next_index);
+        self.reset_detail_state();
+        cx.notify();
     }
 
     fn import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -488,7 +634,9 @@ impl TrafficModule {
                 let count = capture.entries.len();
                 self.capture = Some(capture);
                 self.state = LoadState::Idle;
-                self.tab = PanelTab::Overview;
+                self.request_tab = RequestTab::Overview;
+                self.response_tab = ResponseTab::Headers;
+                self.status_filter = None;
                 self.selected = None;
                 self.detail = None;
                 self.reset_detail_state();
@@ -516,7 +664,9 @@ impl TrafficModule {
         self.filtered.clear();
         self.selected = None;
         self.detail = None;
-        self.tab = PanelTab::Overview;
+        self.request_tab = RequestTab::Overview;
+        self.response_tab = ResponseTab::Headers;
+        self.status_filter = None;
         self.reset_detail_state();
         self.state = LoadState::Idle;
         cx.notify();
@@ -622,38 +772,63 @@ impl TrafficModule {
                     ),
             )
             .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div().w_96().child(
-                            Input::new(&self.search)
-                                .w_full()
-                                .cleanable(true)
-                                .prefix(Icon::new(AppIcon::Search).small()),
-                        ),
-                    )
-                    .child(div().flex_1())
-                    .when(self.capture.is_some(), |this| {
-                        this.child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(format!(
-                                    "{} of {}",
-                                    self.filtered.len(),
-                                    self.capture.as_ref().map_or(0, |c| c.entries.len())
-                                )),
-                        )
-                    }),
+                div().h_flex().items_center().gap_2().child(
+                    div().w_96().child(
+                        Input::new(&self.search)
+                            .w_full()
+                            .cleanable(true)
+                            .prefix(Icon::new(AppIcon::Search).small()),
+                    ),
+                ),
             )
+            .child(self.render_filter_chips(cx))
             .into_any_element()
     }
 
-    fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// 过滤器 chip 行：一个轴（状态类）。选中即高亮，再点一次取消。
+    ///
+    /// chip 上带这一类的条数——筛完能一眼验算，不必回头数行。
+    fn render_filter_chips(&self, cx: &mut Context<Self>) -> AnyElement {
+        let total = self
+            .capture
+            .as_ref()
+            .map_or(0, |capture| capture.entries.len());
+        let mut chips = div().h_flex().items_center().gap_1();
+        chips = chips.child(
+            Button::new("filter-all")
+                .ghost()
+                .xsmall()
+                .selected(self.status_filter.is_none())
+                .label("All")
+                .on_click(cx.listener(|this, _, _, cx| this.set_status_filter(None, cx))),
+        );
+        for (filter, count) in self.filter_counts() {
+            chips = chips.child(
+                Button::new(format!("filter-{}", filter.label()))
+                    .ghost()
+                    .xsmall()
+                    .selected(self.status_filter == Some(filter))
+                    .label(format!("{} ({count})", filter.label()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_status_filter(Some(filter), cx);
+                    })),
+            );
+        }
+        chips = chips.child(div().flex_1());
+        if self.capture.is_some() {
+            chips = chips.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("{} of {total}", self.filtered.len())),
+            );
+        }
+        chips.into_any_element()
+    }
+
+    fn render_body(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
         let content = if let Some(capture) = self.capture.as_ref() {
-            self.render_capture(capture, cx)
+            self.render_capture(capture, narrow, cx)
         } else {
             match &self.state {
                 LoadState::Loading => self.render_notice(
@@ -745,7 +920,12 @@ impl TrafficModule {
             .into_any_element()
     }
 
-    fn render_capture(&self, capture: &CaptureLog, cx: &mut Context<Self>) -> AnyElement {
+    fn render_capture(
+        &self,
+        capture: &CaptureLog,
+        narrow: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         if capture.entries.is_empty() {
             return self.render_notice(
                 AppIcon::Empty,
@@ -761,35 +941,60 @@ impl TrafficModule {
             _ => None,
         };
         let detail = if self.detail.is_some() {
-            Some(self.render_detail(cx))
+            Some(self.render_detail(narrow, cx))
         } else {
             None
         };
-        // 详情是浮层，不参与列表的宽度分配：打开/关闭都不会让列宽跳动。
-        let mut content = div()
-            .flex_1()
-            .min_h_0()
-            .relative()
-            .child(self.render_list(cx));
-        if let Some(detail) = detail {
-            content = content.child(
-                div()
-                    // 浮层遮住的部分不再参与命中：滚轮不会穿透到底下的列表，
-                    // 空白处点击也不会选中被盖住的行。
-                    .occlude()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .bottom_0()
-                    .w(DETAIL_WIDTH)
-                    .border_l_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().background)
-                    .shadow_lg()
-                    .child(detail),
-            );
-        }
-        let content = content.into_any_element();
+        let list = self.render_list(cx);
+        let content = match detail {
+            // 窄窗口：列表在上、详情在底部通栏，请求 / 响应左右并排。
+            // 底部通栏是 flex 兄弟节点而不是浮层——它给列表让出高度，不遮路径列。
+            Some(detail) if narrow => div()
+                .flex_1()
+                .min_h_0()
+                .v_flex()
+                .child(list)
+                .child(
+                    div()
+                        .occlude()
+                        .w_full()
+                        .h(DETAIL_BOTTOM_HEIGHT)
+                        .border_t_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().background)
+                        .child(detail),
+                )
+                .into_any_element(),
+            // 宽窗口：详情是浮层，不参与列表的宽度分配——打开/关闭都不会让列宽跳动。
+            Some(detail) => div()
+                .flex_1()
+                .min_h_0()
+                .relative()
+                .child(list)
+                .child(
+                    div()
+                        // 浮层遮住的部分不再参与命中：滚轮不会穿透到底下的列表，
+                        // 空白处点击也不会选中被盖住的行。
+                        .occlude()
+                        .absolute()
+                        .top_0()
+                        .right_0()
+                        .bottom_0()
+                        .w(DETAIL_WIDTH)
+                        .border_l_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().background)
+                        .shadow_lg()
+                        .child(detail),
+                )
+                .into_any_element(),
+            None => div()
+                .flex_1()
+                .min_h_0()
+                .relative()
+                .child(list)
+                .into_any_element(),
+        };
 
         div()
             .flex_1()
@@ -1008,7 +1213,11 @@ impl TrafficModule {
             .into_any_element()
     }
 
-    fn render_detail(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// 详情浮层：一个头 + 请求段 + 响应段。
+    ///
+    /// 两段各带自己的标签栏与滚动，于是「请求头带的 token」与「响应头回的
+    /// status」能同时看到——审失败会话时，这两组证据必须并排。
+    fn render_detail(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
         let Some((entry_index, entry)) = self.detail_entry() else {
             return self.render_notice(
                 AppIcon::Empty,
@@ -1018,9 +1227,58 @@ impl TrafficModule {
                 cx,
             );
         };
+        let request = self.render_request_section(entry, entry_index, narrow, cx);
+        let response = self.render_response_section(entry, entry_index, cx);
+        let sections = if narrow {
+            // 竖向布局：请求在左、响应在右，两段并排。
+            // items_stretch 不能省：h_flex 默认在交叉轴上居中，两段会各自按内容
+            // 高度居中——高的一段上下溢出被裁，低的一段悬在中间，两段都读不全。
+            div()
+                .flex_1()
+                .min_h_0()
+                .h_flex()
+                .items_stretch()
+                .child(request)
+                .child(response)
+                .into_any_element()
+        } else {
+            div()
+                .flex_1()
+                .min_h_0()
+                .v_flex()
+                .child(request)
+                .child(response)
+                .into_any_element()
+        };
+        div()
+            .w_full()
+            .h_full()
+            .min_h_0()
+            .min_w_0()
+            .v_flex()
+            .child(self.render_detail_header(entry, cx))
+            .child(sections)
+            .into_any_element()
+    }
 
-        let copy_url = entry.url.clone();
-        let header = div()
+    /// 浮层头部：方法与状态 + 上一条/下一条 + 关闭。
+    ///
+    /// 上一条/下一条是这份列表唯一的效率杠杆：一份会话动辄几百条，靠回列表
+    /// 点行翻要几十次往返。
+    fn render_detail_header(&self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
+        let (can_previous, can_next) = match self.detail_position() {
+            Some((index, len)) => (index > 0, index + 1 < len),
+            None => (false, false),
+        };
+        let duration = entry
+            .duration_ms
+            .map(format_duration)
+            .unwrap_or_else(|| "—".to_string());
+        let size = entry
+            .size
+            .map(format_bytes)
+            .unwrap_or_else(|| "—".to_string());
+        div()
             .px_4()
             .pt_3()
             .pb_2()
@@ -1033,16 +1291,7 @@ impl TrafficModule {
                     .h_flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded(cx.theme().radius)
-                            .bg(cx.theme().accent)
-                            .text_xs()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(entry.method.clone()),
-                    )
+                    .child(method_badge(&entry.method, cx))
                     .child(
                         div()
                             .text_xs()
@@ -1050,27 +1299,20 @@ impl TrafficModule {
                             .text_color(status_color(entry, cx))
                             .child(status_text(entry)),
                     )
-                    .child(meta_text(
-                        &entry
-                            .duration_ms
-                            .map(format_duration)
-                            .unwrap_or_else(|| "—".to_string()),
-                        cx,
-                    ))
-                    .child(meta_text(
-                        &entry
-                            .size
-                            .map(format_bytes)
-                            .unwrap_or_else(|| "—".to_string()),
-                        cx,
-                    ))
+                    .child(meta_text(&duration, cx))
+                    .child(meta_text(&size, cx))
                     .child(div().flex_1())
                     .child(
-                        ui::icon_button("copy-url", AppIcon::Copy, cx)
-                            .tooltip("Copy URL")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.copy_text(copy_url.clone(), window, cx);
-                            })),
+                        ui::icon_button("detail-previous", AppIcon::PreviousEntry, cx)
+                            .tooltip("Previous request")
+                            .disabled(!can_previous)
+                            .on_click(cx.listener(|this, _, _, cx| this.step_detail(-1, cx))),
+                    )
+                    .child(
+                        ui::icon_button("detail-next", AppIcon::NextEntry, cx)
+                            .tooltip("Next request")
+                            .disabled(!can_next)
+                            .on_click(cx.listener(|this, _, _, cx| this.step_detail(1, cx))),
                     )
                     .child(
                         ui::icon_button("close-detail", AppIcon::Remove, cx)
@@ -1078,38 +1320,6 @@ impl TrafficModule {
                             .on_click(cx.listener(|this, _, _, cx| this.close_detail(cx))),
                     ),
             )
-            .child(
-                // 长 URL 不能靠内容撑宽详情：`min_w_0` 让截断真正生效，
-                // 面板才能保持用户/默认给的宽度。
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .font(ui::mono_font(cx))
-                    .text_xs()
-                    .truncate()
-                    .child(entry.url.clone()),
-            );
-
-        let tabs = div()
-            .px_4()
-            .py_2()
-            .h_flex()
-            .items_center()
-            .gap_1()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .children(PanelTab::ALL.into_iter().map(|tab| {
-                Button::new(format!("traffic-tab-{}", tab.label()))
-                    .ghost()
-                    .small()
-                    .selected(self.tab == tab)
-                    .label(tab.label())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.tab = tab;
-                        cx.notify();
-                    }))
-            }))
-            .child(div().flex_1())
             .child(meta_text(
                 &entry
                     .started
@@ -1117,35 +1327,292 @@ impl TrafficModule {
                     .map(started_label)
                     .unwrap_or_default(),
                 cx,
-            ));
+            ))
+            .into_any_element()
+    }
 
-        let content = match self.tab {
-            PanelTab::Overview => self.render_overview(entry, cx),
-            PanelTab::Request => self.render_request(entry, entry_index, cx),
-            PanelTab::Response => self.render_response(entry, entry_index, cx),
+    /// URL 独立成行：它是这次请求的身份，其余字段都能由它推出。
+    ///
+    /// 整行可点，交给系统默认浏览器打开；URL 用链接色、不截断，完整内容
+    /// 由旁边的复制按钮取。
+    fn render_url_row(&self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
+        let open = entry.url.clone();
+        let open_for_link = open.clone();
+        let copy = entry.url.clone();
+        div()
+            .px_4()
+            .py_2()
+            .h_flex()
+            .items_center()
+            .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .id("detail-url")
+                    .flex_1()
+                    .min_w_0()
+                    .font(ui::mono_font(cx))
+                    .text_xs()
+                    .text_color(cx.theme().link)
+                    .cursor_pointer()
+                    .hover(|this| this.text_color(cx.theme().link_hover))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.open_url(&open_for_link);
+                    }))
+                    .children(url_lines(&entry.url)),
+            )
+            .child(
+                ui::icon_button("open-url", AppIcon::OpenLink, cx)
+                    .tooltip("Open in browser")
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.open_url(&open);
+                    })),
+            )
+            .child(
+                ui::icon_button("copy-url", AppIcon::Copy, cx)
+                    .tooltip("Copy URL")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.copy_text(copy.clone(), window, cx);
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn render_request_section(
+        &self,
+        entry: &Entry,
+        entry_index: usize,
+        narrow: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let tab = self.request_tab_for(entry);
+        let (toolbar, content) = match tab {
+            RequestTab::Overview => (None, self.render_overview(entry, cx)),
+            RequestTab::Params => (None, self.render_params(entry, cx)),
+            RequestTab::Headers => (
+                None,
+                self.render_headers_section(&entry.request_headers, cx),
+            ),
+            RequestTab::Body => (
+                Some(self.render_body_toolbar(entry.request_body.as_ref(), BodySide::Request, cx)),
+                self.render_body_content(
+                    entry.request_body.as_ref(),
+                    BodySide::Request,
+                    entry_index,
+                    cx,
+                ),
+            ),
         };
         div()
-            .w_full()
-            .h_full()
+            .flex_1()
             .min_h_0()
             .min_w_0()
             .v_flex()
-            .child(header)
-            .child(tabs)
+            .when(narrow, |this| {
+                this.border_r_1().border_color(cx.theme().border)
+            })
+            .child(self.render_url_row(entry, cx))
+            .child(self.render_request_tabs(entry, tab, cx))
+            .when_some(toolbar, |this, toolbar| this.child(toolbar))
             .child(
                 div()
                     .flex_1()
                     .min_h_0()
-                    .id(format!("traffic-detail-scroll-{entry_index}"))
+                    .id(format!("traffic-request-scroll-{entry_index}"))
                     .overflow_y_scroll()
                     .child(content),
             )
             .into_any_element()
     }
 
-    fn render_overview(&self, entry: &Entry, cx: &App) -> AnyElement {
-        let mut rows = vec![
-            info_row("URL", entry.url.clone(), true, cx),
+    fn render_response_section(
+        &self,
+        entry: &Entry,
+        entry_index: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let tab = self.response_tab_for(entry);
+        let (toolbar, content) = match tab {
+            ResponseTab::Headers => (
+                None,
+                self.render_headers_section(&entry.response_headers, cx),
+            ),
+            ResponseTab::Body => (
+                Some(self.render_body_toolbar(
+                    entry.response_body.as_ref(),
+                    BodySide::Response,
+                    cx,
+                )),
+                self.render_body_content(
+                    entry.response_body.as_ref(),
+                    BodySide::Response,
+                    entry_index,
+                    cx,
+                ),
+            ),
+        };
+        div()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .v_flex()
+            // 段之间要有分隔线：两段是两组性质不同的证据，
+            // 界线不清时读者分不清哪一行属于请求、哪一行属于响应。
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .child(self.render_response_tabs(entry, tab, cx))
+            .when_some(toolbar, |this, toolbar| this.child(toolbar))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .id(format!("traffic-response-scroll-{entry_index}"))
+                    .overflow_y_scroll()
+                    .child(content),
+            )
+            .into_any_element()
+    }
+
+    /// 请求段的标签栏：标签名带计数，右端挂方法徽标。
+    fn render_request_tabs(
+        &self,
+        entry: &Entry,
+        active: RequestTab,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let param_count = entry
+            .query
+            .as_deref()
+            .map(|query| capture::parse_query(query).len())
+            .unwrap_or(0);
+        let mut tabs = div()
+            .px_4()
+            .py_2()
+            .h_flex()
+            .items_center()
+            .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(section_title("REQUEST", cx));
+        for tab in RequestTab::ALL {
+            if !request_tab_available(tab, entry) {
+                continue;
+            }
+            let label = match tab {
+                RequestTab::Params => format!("Params ({param_count})"),
+                RequestTab::Headers => format!("Headers ({})", entry.request_headers.len()),
+                _ => tab.label().to_string(),
+            };
+            tabs = tabs.child(
+                Button::new(format!("request-tab-{}", tab.label()))
+                    .ghost()
+                    .xsmall()
+                    .selected(active == tab)
+                    .label(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.request_tab = tab;
+                        cx.notify();
+                    })),
+            );
+        }
+        tabs.child(div().flex_1())
+            .child(method_badge(&entry.method, cx))
+            .into_any_element()
+    }
+
+    /// 响应段的标签栏：右端挂协议与状态码徽标。
+    fn render_response_tabs(
+        &self,
+        entry: &Entry,
+        active: ResponseTab,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut tabs = div()
+            .px_4()
+            .py_2()
+            .h_flex()
+            .items_center()
+            .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(section_title("RESPONSE", cx));
+        for tab in ResponseTab::ALL {
+            if !response_tab_available(tab, entry) {
+                continue;
+            }
+            let label = match tab {
+                ResponseTab::Headers => format!("Headers ({})", entry.response_headers.len()),
+                ResponseTab::Body => "Body".to_string(),
+            };
+            tabs = tabs.child(
+                Button::new(format!("response-tab-{}", tab.label()))
+                    .ghost()
+                    .xsmall()
+                    .selected(active == tab)
+                    .label(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.response_tab = tab;
+                        cx.notify();
+                    })),
+            );
+        }
+        // 协议只有 HAR 记录了；拿不到就不挂这个徽标，不拿别的东西凑。
+        let protocol = entry
+            .protocol
+            .as_ref()
+            .map(|protocol| soft_badge(protocol, cx.theme().muted_foreground, cx));
+        tabs.child(div().flex_1())
+            .when_some(protocol, |this, badge| this.child(badge))
+            .child(soft_badge(&status_text(entry), status_color(entry, cx), cx))
+            .into_any_element()
+    }
+
+    /// 选中的页签在这条请求上不存在时（换了一条没有正文的请求），退到第一个可用的。
+    fn request_tab_for(&self, entry: &Entry) -> RequestTab {
+        if request_tab_available(self.request_tab, entry) {
+            return self.request_tab;
+        }
+        RequestTab::ALL
+            .into_iter()
+            .find(|tab| request_tab_available(*tab, entry))
+            .unwrap_or(RequestTab::Overview)
+    }
+
+    fn response_tab_for(&self, entry: &Entry) -> ResponseTab {
+        if response_tab_available(self.response_tab, entry) {
+            return self.response_tab;
+        }
+        ResponseTab::ALL
+            .into_iter()
+            .find(|tab| response_tab_available(*tab, entry))
+            .unwrap_or(ResponseTab::Headers)
+    }
+
+    fn render_params(&self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
+        let Some(query) = entry.query.as_deref() else {
+            return div()
+                .px_4()
+                .pb_3()
+                .child(note_text("No query parameters", cx))
+                .into_any_element();
+        };
+        let pairs = capture::parse_query(query);
+        if pairs.is_empty() {
+            return div()
+                .px_4()
+                .pb_3()
+                .child(note_text("No query parameters", cx))
+                .into_any_element();
+        }
+        self.render_pairs_section("QUERY PARAMETERS", &pairs, cx)
+    }
+
+    /// 总览：一张事实表，分「基本」与「来源」两组，后者可折叠。
+    ///
+    /// URL 不在这里——它是浮层里独立的一行（P0-3），要读的东西不该被折叠。
+    fn render_overview(&self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
+        let basic = vec![
             info_row_colored(
                 "Status",
                 status_text(entry),
@@ -1174,6 +1641,8 @@ impl TrafficModule {
                 false,
                 cx,
             ),
+        ];
+        let mut source = vec![
             info_row(
                 "Started",
                 entry
@@ -1195,10 +1664,10 @@ impl TrafficModule {
             ),
         ];
         if let Some(query) = entry.query.as_deref() {
-            push_query_count(&mut rows, query, cx);
+            push_query_count(&mut source, query, cx);
         }
         if let Some(note) = entry.note.as_deref() {
-            rows.push(info_row_colored(
+            source.push(info_row_colored(
                 "Error",
                 note.to_string(),
                 cx.theme().danger,
@@ -1206,53 +1675,66 @@ impl TrafficModule {
                 false,
             ));
         }
+
+        let collapsed = self.collapsed_groups.contains(SOURCE_GROUP);
         div()
             .v_flex()
             .border_b_1()
             .border_color(cx.theme().border)
-            .child(table_band("GENERAL", None, None, cx))
-            .child(div().w_full().v_flex().children(rows))
+            .child(self.render_group_band("basic", "BASIC", false, cx))
+            .child(div().w_full().v_flex().children(basic))
+            .child(self.render_group_band("source", "SOURCE", collapsed, cx))
+            .when(!collapsed, |this| {
+                this.child(div().w_full().v_flex().children(source))
+            })
             .into_any_element()
     }
 
-    fn render_request(
+    /// 可折叠分组的标题带。标题可点，点了收起/展开这一组。
+    fn render_group_band(
         &self,
-        entry: &Entry,
-        entry_index: usize,
+        id: &'static str,
+        title: &str,
+        collapsed: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut sections = Vec::new();
-        if let Some(query) = entry.query.as_deref() {
-            let pairs = capture::parse_query(query);
-            if !pairs.is_empty() {
-                sections.push(self.render_pairs_section("QUERY PARAMETERS", &pairs, cx));
-            }
-        }
-        sections.push(self.render_headers_section(&entry.request_headers, cx));
-        sections.push(self.render_body_section(
-            entry.request_body.as_ref(),
-            BodySide::Request,
-            entry_index,
-            cx,
-        ));
-        div().v_flex().children(sections).into_any_element()
-    }
-
-    fn render_response(
-        &self,
-        entry: &Entry,
-        entry_index: usize,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+        let key = id.to_string();
         div()
-            .v_flex()
-            .child(self.render_headers_section(&entry.response_headers, cx))
-            .child(self.render_body_section(
-                entry.response_body.as_ref(),
-                BodySide::Response,
-                entry_index,
-                cx,
-            ))
+            .id(format!("group-band-{id}"))
+            .w_full()
+            .h_flex()
+            .items_center()
+            .gap_1()
+            .px_4()
+            .py_2()
+            .bg(cx.theme().tokens.table_head)
+            .border_b_1()
+            .border_color(cx.theme().table_row_border)
+            .cursor_pointer()
+            .hover(|this| this.bg(cx.theme().table_hover))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if !this.collapsed_groups.remove(&key) {
+                    this.collapsed_groups.insert(key.clone());
+                }
+                cx.notify();
+            }))
+            .child(
+                Icon::new(if collapsed {
+                    AppIcon::ShowChildren
+                } else {
+                    AppIcon::HideChildren
+                })
+                .small()
+                .text_color(cx.theme().muted_foreground),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(cx.theme().table_head_foreground)
+                    .child(title.to_string()),
+            )
+            .child(div().flex_1())
             .into_any_element()
     }
 
@@ -1378,11 +1860,13 @@ impl TrafficModule {
             .into_any_element()
     }
 
-    fn render_body_section(
+    /// 正文工具栏：视图切换（Pretty / Tree / Raw / Hex）+ 大小 + 复制。
+    ///
+    /// 它挂在段标签栏下面，不重复写「BODY」——段标签栏已经说了这是正文。
+    fn render_body_toolbar(
         &self,
         body: Option<&Body>,
         side: BodySide,
-        entry_index: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let available = body.map(available_modes).unwrap_or_default();
@@ -1395,17 +1879,17 @@ impl TrafficModule {
             .unwrap_or_else(|| "empty".to_string());
         let copy_text = body.and_then(|body| body.preview.clone());
 
-        let mut header = div()
+        let mut toolbar = div()
             .px_4()
             .py_2()
             .h_flex()
             .items_center()
             .gap_2()
-            .child(section_title("BODY", cx))
-            .child(meta_text(&meta, cx))
-            .child(div().flex_1());
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(meta_text(&meta, cx));
         for mode in available {
-            header = header.child(
+            toolbar = toolbar.child(
                 Button::new(format!("body-mode-{}-{}", side.key(), mode.key()))
                     .ghost()
                     .xsmall()
@@ -1417,8 +1901,9 @@ impl TrafficModule {
                     })),
             );
         }
+        toolbar = toolbar.child(div().flex_1());
         if let Some(copy_text) = copy_text {
-            header = header.child(
+            toolbar = toolbar.child(
                 ui::icon_button(format!("copy-body-{}", side.key()), AppIcon::Copy, cx)
                     .tooltip("Copy body")
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -1426,56 +1911,74 @@ impl TrafficModule {
                     })),
             );
         }
+        toolbar.into_any_element()
+    }
 
-        let content = match body {
-            None => div()
+    /// 正文内容：按当前视图渲染这一侧的身体。
+    fn render_body_content(
+        &self,
+        body: Option<&Body>,
+        side: BodySide,
+        entry_index: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(body) = body else {
+            return div()
                 .px_4()
                 .pb_3()
                 .child(note_text("No body", cx))
-                .into_any_element(),
-            Some(body) => {
-                let mut block = div().px_4().pb_3().v_flex().gap_2();
-                if body.truncated {
-                    let shown = body
-                        .preview
-                        .as_deref()
-                        .map_or(0, |preview| preview.len() as u64);
-                    let message = match body.size {
-                        Some(size) => format!(
-                            "Showing the first {} of {}; formatting uses the preview only.",
-                            format_bytes(shown),
-                            format_bytes(size)
-                        ),
-                        None => format!(
-                            "Showing the first {}; formatting uses the preview only.",
-                            format_bytes(shown)
-                        ),
-                    };
-                    block = block.child(note_text(&message, cx));
-                }
-                let formatted = match active {
-                    BodyMode::Pretty => json_value(body)
-                        .map(|value| highlighted_code_block(pretty_json(&value), cx))
-                        .unwrap_or_else(|| self.render_plain_body(body, cx)),
-                    BodyMode::Tree => json_value(body)
-                        .map(|value| self.render_tree(&value, entry_index, side, cx))
-                        .unwrap_or_else(|| self.render_plain_body(body, cx)),
-                    BodyMode::Form => body_pairs(body)
-                        .map(|pairs| self.render_form_rows(&pairs, side, entry_index, cx))
-                        .unwrap_or_else(|| self.render_plain_body(body, cx)),
-                    BodyMode::Raw => self.render_plain_body(body, cx),
-                };
-                block.child(formatted).into_any_element()
-            }
+                .into_any_element();
         };
+        let active = self.mode_for(body, side);
+        let mut block = div().px_4().pb_3().v_flex().gap_2();
+        if body.truncated {
+            // 二进制正文没有 preview，只有 bytes；按 preview 取长度会得到 "first 0 B"。
+            let shown = body_bytes(body).map_or(0, |bytes| bytes.len() as u64);
+            let tail = if active == BodyMode::Hex {
+                "; Hex shows the captured bytes only."
+            } else {
+                "; formatting uses the preview only."
+            };
+            let message = match body.size {
+                Some(size) => format!(
+                    "Showing the first {} of {}{tail}",
+                    format_bytes(shown),
+                    format_bytes(size)
+                ),
+                None => format!("Showing the first {}{tail}", format_bytes(shown)),
+            };
+            block = block.child(note_text(&message, cx));
+        }
+        let formatted = match active {
+            BodyMode::Pretty => json_value(body)
+                .map(|value| highlighted_code_block(pretty_json(&value), cx))
+                .unwrap_or_else(|| self.render_plain_body(body, cx)),
+            BodyMode::Tree => json_value(body)
+                .map(|value| self.render_tree(&value, entry_index, side, cx))
+                .unwrap_or_else(|| self.render_plain_body(body, cx)),
+            BodyMode::Form => body_pairs(body)
+                .map(|pairs| self.render_form_rows(&pairs, side, entry_index, cx))
+                .unwrap_or_else(|| self.render_plain_body(body, cx)),
+            BodyMode::Raw => self.render_plain_body(body, cx),
+            BodyMode::Hex => self.render_hex_body(body, cx),
+        };
+        block.child(formatted).into_any_element()
+    }
 
-        div()
-            .v_flex()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(header)
-            .child(content)
-            .into_any_element()
+    /// Hex 视图：二进制正文的兜底。没有它，这类条目在详情里等于空白。
+    fn render_hex_body(&self, body: &Body, cx: &App) -> AnyElement {
+        let Some(bytes) = body_bytes(body) else {
+            return note_text("No bytes captured", cx).into_any_element();
+        };
+        let (rows, truncated) = hex_dump(bytes);
+        let mut view = code_shell(cx).children(rows);
+        if truncated {
+            view = view.child(note_text(
+                &format!("Hex stops after {MAX_HEX_ROWS} rows; the rest is not shown."),
+                cx,
+            ));
+        }
+        view.into_any_element()
     }
 
     fn render_plain_body(&self, body: &Body, cx: &App) -> AnyElement {
@@ -1596,9 +2099,11 @@ impl Focusable for TrafficModule {
 }
 
 impl Render for TrafficModule {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 窄窗口时详情改成底部通栏：560px 的右侧浮层会盖住列表的路径列。
+        let narrow = window.viewport_size().width < NARROW_WINDOW_WIDTH;
         let header = self.render_header(cx);
-        let body = self.render_body(cx);
+        let body = self.render_body(narrow, cx);
         div()
             .track_focus(&self.focus_handle)
             .key_context(KEY_CONTEXT)
@@ -1706,6 +2211,79 @@ fn section_title(text: &str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+/// 方法徽标：`POST` 这类关键字用等宽体，不着色——着色是留给状态码的。
+fn method_badge(method: &str, cx: &App) -> AnyElement {
+    div()
+        .px_1()
+        .rounded(cx.theme().radius)
+        .bg(cx.theme().secondary)
+        .text_xs()
+        .font(ui::mono_font(cx))
+        .child(method.to_string())
+        .into_any_element()
+}
+
+/// 软徽标：一枚带底色的短文本，用于协议与状态码。颜色由调用方给（主题语义色）。
+fn soft_badge(text: &str, color: Hsla, cx: &App) -> AnyElement {
+    div()
+        .px_1()
+        .rounded(cx.theme().radius)
+        .bg(color.opacity(0.14))
+        .text_xs()
+        .font(ui::mono_font(cx))
+        .text_color(color)
+        .child(text.to_string())
+        .into_any_element()
+}
+
+/// 标签是上下文相关的：没有参数就不出「参数」标签，没有正文就不出「正文」标签。
+fn request_tab_available(tab: RequestTab, entry: &Entry) -> bool {
+    match tab {
+        RequestTab::Overview => true,
+        RequestTab::Params => entry
+            .query
+            .as_deref()
+            .is_some_and(|query| !capture::parse_query(query).is_empty()),
+        RequestTab::Headers => !entry.request_headers.is_empty(),
+        RequestTab::Body => entry.request_body.is_some(),
+    }
+}
+
+fn response_tab_available(tab: ResponseTab, entry: &Entry) -> bool {
+    match tab {
+        ResponseTab::Headers => !entry.response_headers.is_empty(),
+        ResponseTab::Body => entry.response_body.is_some(),
+    }
+}
+
+/// URL 太长时按分隔符折行。
+///
+/// GPUI 没有断词换行，一个没有断点的长 URL 只能截断——而 URL 恰恰是要读的东西。
+/// 所以自己切：尽量落在 `/ ? & #` 这些语义边界上，并且至少留 8 个字符，
+/// 免得把 `https://` 拆开（拆开了读者会以为地址变了）。
+fn url_lines(url: &str) -> Vec<String> {
+    let chars: Vec<char> = url.chars().collect();
+    if chars.len() <= URL_LINE_WIDTH {
+        return vec![url.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let end = (start + URL_LINE_WIDTH).min(chars.len());
+        if end == chars.len() {
+            lines.push(chars[start..].iter().collect());
+            break;
+        }
+        let mut cut = end;
+        while cut > start + 8 && !matches!(chars[cut - 1], '/' | '?' | '&' | '#') {
+            cut -= 1;
+        }
+        lines.push(chars[start..cut].iter().collect());
+        start = cut;
+    }
+    lines
+}
+
 fn meta_text(text: &str, cx: &App) -> AnyElement {
     div()
         .text_xs()
@@ -1766,6 +2344,11 @@ fn highlight_style(token: Token, cx: &App) -> HighlightStyle {
 
 fn available_modes(body: &Body) -> Vec<BodyMode> {
     let mut modes = Vec::new();
+    if body.binary {
+        // 二进制没有别的看法，只有字节。
+        modes.push(BodyMode::Hex);
+        return modes;
+    }
     if json_value(body).is_some() {
         modes.push(BodyMode::Pretty);
         modes.push(BodyMode::Tree);
@@ -1774,7 +2357,57 @@ fn available_modes(body: &Body) -> Vec<BodyMode> {
         modes.push(BodyMode::Form);
     }
     modes.push(BodyMode::Raw);
+    modes.push(BodyMode::Hex);
     modes
+}
+
+/// 正文要看的字节：二进制正文取存下来的原始字节，文本正文取预览的字节。
+fn body_bytes(body: &Body) -> Option<&[u8]> {
+    if let Some(bytes) = body.bytes.as_deref() {
+        return Some(bytes);
+    }
+    body.preview.as_deref().map(|preview| preview.as_bytes())
+}
+
+/// Hex 视图的一行：偏移 + 两组 8 字节 + ASCII 侧栏。
+fn hex_dump(bytes: &[u8]) -> (Vec<String>, bool) {
+    let mut rows = Vec::new();
+    let mut truncated = false;
+    for (index, chunk) in bytes.chunks(16).enumerate() {
+        if index >= MAX_HEX_ROWS {
+            truncated = true;
+            break;
+        }
+        let ascii: String = chunk
+            .iter()
+            .map(|byte| {
+                if byte.is_ascii_graphic() || *byte == b' ' {
+                    *byte as char
+                } else {
+                    '.'
+                }
+            })
+            .collect();
+        rows.push(format!(
+            "{:08x}  {}  {}  |{ascii}|",
+            index * 16,
+            hex_group(chunk.get(..8).unwrap_or(chunk)),
+            hex_group(chunk.get(8..).unwrap_or(&[])),
+        ));
+    }
+    (rows, truncated)
+}
+
+/// Hex 视图里的半行：8 个字节槽，缺的补空格，两组对齐才读得出边界。
+fn hex_group(chunk: &[u8]) -> String {
+    let mut group = String::new();
+    for index in 0..8 {
+        match chunk.get(index) {
+            Some(byte) => group.push_str(&format!("{byte:02x} ")),
+            None => group.push_str("   "),
+        }
+    }
+    group
 }
 
 fn json_value(body: &Body) -> Option<serde_json::Value> {
@@ -2106,6 +2739,7 @@ mod tests {
             size: Some(preview.len() as u64),
             truncated: false,
             binary: false,
+            bytes: None,
             mime: mime.to_string(),
         }
     }
@@ -2171,17 +2805,22 @@ mod tests {
         let json = body("application/json", r#"{"a":1,"b":[true,null]}"#);
         assert_eq!(
             available_modes(&json),
-            vec![BodyMode::Pretty, BodyMode::Tree, BodyMode::Raw]
+            vec![
+                BodyMode::Pretty,
+                BodyMode::Tree,
+                BodyMode::Raw,
+                BodyMode::Hex
+            ]
         );
         let mut truncated = body("application/json", r#"{"a":1"#);
         truncated.truncated = true;
         assert_eq!(
             available_modes(&truncated),
-            vec![BodyMode::Raw],
+            vec![BodyMode::Raw, BodyMode::Hex],
             "预览被截断时不能假装能格式化成 JSON"
         );
         let text = body("text/plain", "hello");
-        assert_eq!(available_modes(&text), vec![BodyMode::Raw]);
+        assert_eq!(available_modes(&text), vec![BodyMode::Raw, BodyMode::Hex]);
     }
 
     #[test]
@@ -2190,7 +2829,10 @@ mod tests {
             "application/x-www-form-urlencoded; charset=utf-8",
             "user=alice&token=x%20y",
         );
-        assert_eq!(available_modes(&form), vec![BodyMode::Form, BodyMode::Raw]);
+        assert_eq!(
+            available_modes(&form),
+            vec![BodyMode::Form, BodyMode::Raw, BodyMode::Hex]
+        );
         assert_eq!(
             body_pairs(&form).expect("form pairs"),
             vec![
@@ -2198,6 +2840,101 @@ mod tests {
                 ("token".to_string(), "x y".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn binary_bodies_only_offer_hex() {
+        let mut binary = body("application/octet-stream", "");
+        binary.preview = None;
+        binary.binary = true;
+        binary.bytes = Some(vec![0x1f, 0x8b, 0x08, 0x00]);
+        assert_eq!(
+            available_modes(&binary),
+            vec![BodyMode::Hex],
+            "二进制没有别的看法，只有字节"
+        );
+        assert_eq!(body_bytes(&binary), Some(&[0x1f_u8, 0x8b, 0x08, 0x00][..]));
+    }
+
+    #[test]
+    fn hex_dump_lays_out_offsets_bytes_and_ascii() {
+        let (rows, truncated) = hex_dump(b"Hi\x00!");
+        assert!(!truncated);
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert!(row.starts_with("00000000  48 69 00 21"), "{row}");
+        assert!(row.ends_with("|Hi.!|"), "{row}");
+    }
+
+    #[test]
+    fn hex_dump_stops_at_the_row_cap() {
+        let bytes = vec![0x41_u8; 16 * (MAX_HEX_ROWS + 8)];
+        let (rows, truncated) = hex_dump(&bytes);
+        assert_eq!(rows.len(), MAX_HEX_ROWS);
+        assert!(truncated, "超出的字节要说明，不能默默少给");
+    }
+
+    #[test]
+    fn long_urls_break_on_separators_and_keep_the_scheme() {
+        let url = format!(
+            "https://example.com/api/v1/{}/resource?token=abc&page=1",
+            "a".repeat(120)
+        );
+        let lines = url_lines(&url);
+        assert!(lines.len() > 1, "长 URL 要折行，不能被截断");
+        let joined: String = lines.concat();
+        assert_eq!(joined, url, "折行不能吃掉字符");
+        assert!(
+            lines[0].starts_with("https://example.com/"),
+            "第一行要带完整 scheme，读起来才像一个地址：{}",
+            lines[0]
+        );
+        for line in &lines {
+            assert!(line.chars().count() <= URL_LINE_WIDTH + 8);
+        }
+    }
+
+    #[test]
+    fn short_urls_stay_on_one_line() {
+        let url = "https://example.com/a?b=1";
+        assert_eq!(url_lines(url), vec![url.to_string()]);
+    }
+
+    #[test]
+    fn status_filter_matches_only_its_own_class() {
+        let entry = |status: Option<u16>| Entry {
+            method: "GET".to_string(),
+            host: "example.com".to_string(),
+            path: "/".to_string(),
+            query: None,
+            url: "https://example.com/".to_string(),
+            status,
+            note: None,
+            mime: "text/plain".to_string(),
+            size: None,
+            duration_ms: None,
+            started: None,
+            remote_address: None,
+            request_headers: Vec::new(),
+            response_headers: Vec::new(),
+            request_body: None,
+            response_body: None,
+            protocol: None,
+        };
+        let ok = entry(Some(200));
+        let moved = entry(Some(302));
+        let broken = entry(Some(500));
+        let failed = entry(None);
+
+        assert!(StatusFilter::Success.matches(&ok));
+        assert!(!StatusFilter::Success.matches(&moved));
+        assert!(StatusFilter::Redirect.matches(&moved));
+        assert!(StatusFilter::ServerError.matches(&broken));
+        assert!(
+            !StatusFilter::Success.matches(&failed),
+            "没有状态码的条目不属于任何状态类"
+        );
+        assert!(StatusFilter::Failed.matches(&failed));
     }
 
     #[test]

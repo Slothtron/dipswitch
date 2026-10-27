@@ -106,6 +106,11 @@ pub enum AppIcon {
     Delete,
     Remove,
     More,
+    // 在当前条目里前后走：抓包会话动辄几百条，浮层内翻条是唯一的效率杠杆。
+    PreviousEntry,
+    NextEntry,
+    /// 把一个地址交给系统默认程序打开（详情里的 URL 行）。
+    OpenLink,
     // 环境变量分组
     NewGroup,
     // 字体模块
@@ -146,6 +151,9 @@ impl AppIcon {
         AppIcon::Delete,
         AppIcon::Remove,
         AppIcon::More,
+        AppIcon::PreviousEntry,
+        AppIcon::NextEntry,
+        AppIcon::OpenLink,
         AppIcon::NewGroup,
         AppIcon::Compare,
         AppIcon::Favorite,
@@ -196,6 +204,12 @@ impl AppIcon {
             Self::Remove => Target::Builtin(IconName::CircleX),
             // 行菜单挂在横向排布的表格行上，用竖排三点才不与「行」抢方向。
             Self::More => Target::Builtin(IconName::EllipsisVertical),
+            // 上一条 / 下一条：方向就是动作。不用 Chevron——那对已经被正文的
+            // 节点开关占着，两个语义撞同一个图形会让人分不清谁是谁。
+            Self::PreviousEntry => Target::Builtin(IconName::ArrowUp),
+            Self::NextEntry => Target::Builtin(IconName::ArrowDown),
+            // 交给系统默认程序打开：图形本身就在说「跳出去」。
+            Self::OpenLink => Target::Builtin(IconName::ExternalLink),
             // 新建分组原来是 Folder，和「分组」这个概念对不上。
             Self::NewGroup => Target::Builtin(IconName::FolderPlus),
             Self::Compare => Target::Builtin(IconName::Columns2),
@@ -324,7 +338,7 @@ mod tests {
     /// ALL 必须覆盖每个变体；内置图形之间不允许同形不同义（要重复得有意识地确认）。
     #[test]
     fn all_lists_every_variant_and_builtin_shapes_are_distinct() {
-        assert_eq!(AppIcon::ALL.len(), 31, "增删 AppIcon 变体时同步这条断言");
+        assert_eq!(AppIcon::ALL.len(), 34, "增删 AppIcon 变体时同步这条断言");
         let mut paths: Vec<String> = AppIcon::ALL
             .iter()
             .filter_map(|icon| match icon.target() {

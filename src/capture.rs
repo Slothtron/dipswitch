@@ -70,6 +70,9 @@ pub struct Body {
     pub truncated: bool,
     /// 内容不是合法 UTF-8（按二进制展示，不做猜测解码）。
     pub binary: bool,
+    /// 二进制正文的前若干字节。文本正文不给这个字段——Hex 视图直接用预览的字节，
+    /// 只有「没有文本可依」的二进制才需要把原始字节留下来。
+    pub bytes: Option<Vec<u8>>,
     pub mime: String,
 }
 
@@ -85,6 +88,8 @@ pub struct Entry {
     pub status: Option<u16>,
     /// 失败原因或非 HTTP 结果的说明。
     pub note: Option<String>,
+    /// HTTP 版本（`http/1.1`、`h2`…）。只有 HAR 记录了这个字段，其余格式为 `None`。
+    pub protocol: Option<String>,
     pub mime: String,
     pub size: Option<u64>,
     pub duration_ms: Option<f64>,
@@ -125,6 +130,26 @@ pub fn status_class(status: Option<u16>) -> StatusClass {
         Some(500..=599) => StatusClass::ServerError,
         _ => StatusClass::Pending,
     }
+}
+
+/// HTTP 版本写成一个短的徽标文本：`HTTP/1.1` → `http/1.1`，`h2` → `h2`。
+///
+/// 只做归一，不做判断：会话里写什么版本就显示什么，认不出的串原样保留。
+fn protocol_label(version: &str) -> Option<String> {
+    let trimmed = version.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    Some(match lowered.as_str() {
+        "h2" => "h2".to_string(),
+        "h2c" => "h2c".to_string(),
+        "h3" => "h3".to_string(),
+        "http/2" | "http/2.0" => "h2".to_string(),
+        "http/1.1" => "http/1.1".to_string(),
+        "http/1.0" => "http/1.0".to_string(),
+        _ => trimmed.to_string(),
+    })
 }
 
 /// 读取并解析一个抓包文件。文件超过上限时直接拒绝，不做截断读取。
@@ -236,6 +261,7 @@ fn text_body(text: &str, mime: &str, budget: &mut BodyBudget) -> Body {
         truncated: allowed < text.len(),
         preview: Some(preview),
         binary: false,
+        bytes: None,
         mime: mime.to_string(),
     }
 }
@@ -254,6 +280,7 @@ fn encoded_body(
             size: Some(size),
             truncated: true,
             binary: true,
+            bytes: None,
             mime: mime.to_string(),
             preview: None,
         };
@@ -261,19 +288,24 @@ fn encoded_body(
     let allowed = budget.take(bytes.len());
     bytes.truncate(allowed);
     let truncated = (size as usize) > bytes.len();
-    match std::str::from_utf8(&bytes) {
-        Ok(text) => Body {
-            preview: Some(text.to_string()),
+    let text = std::str::from_utf8(&bytes)
+        .ok()
+        .map(|text| text.to_string());
+    match text {
+        Some(text) => Body {
+            preview: Some(text),
             size: Some(size),
             truncated,
             binary: false,
+            bytes: None,
             mime: mime.to_string(),
         },
-        Err(_) => Body {
+        None => Body {
             preview: None,
             size: Some(size),
             truncated,
             binary: true,
+            bytes: Some(bytes),
             mime: mime.to_string(),
         },
     }
@@ -450,6 +482,8 @@ struct HarRequest {
     method: Option<String>,
     #[serde(default)]
     url: Option<String>,
+    #[serde(default, rename = "httpVersion")]
+    http_version: Option<String>,
     #[serde(default)]
     headers: Vec<NameValue>,
     #[serde(default, rename = "postData")]
@@ -486,6 +520,8 @@ struct HarParam {
 struct HarResponse {
     #[serde(default)]
     status: Option<i64>,
+    #[serde(default, rename = "httpVersion")]
+    http_version: Option<String>,
     #[serde(default)]
     headers: Vec<NameValue>,
     #[serde(default)]
@@ -587,6 +623,10 @@ fn har_entry(
         url,
         status,
         note: None,
+        protocol: request
+            .and_then(|request| request.http_version.as_deref())
+            .or_else(|| response.and_then(|response| response.http_version.as_deref()))
+            .and_then(protocol_label),
         mime,
         size,
         duration_ms: har.time.filter(|time| *time >= 0.0),
@@ -623,6 +663,7 @@ fn har_body(
             size: Some(size),
             truncated: false,
             binary: false,
+            bytes: None,
             mime: mime.to_string(),
         }),
     }
@@ -830,6 +871,7 @@ fn charles_json_entry(
         url,
         status: if note.is_some() { None } else { status },
         note,
+        protocol: None,
         mime,
         size: response
             .and_then(|response| response.sizes.as_ref().and_then(|sizes| sizes.body))
@@ -886,6 +928,7 @@ fn charles_body(
             size: Some(size),
             truncated: false,
             binary: false,
+            bytes: None,
             mime,
         }),
     }
@@ -1275,6 +1318,7 @@ fn xml_entry(
             txn.response_status
         },
         note,
+        protocol: None,
         mime,
         size: response_body
             .as_ref()
@@ -1315,6 +1359,7 @@ fn xml_body(raw: Option<XmlBody>, fallback_mime: &str, budget: &mut BodyBudget) 
                 size: Some(size),
                 truncated: true,
                 binary: false,
+                bytes: None,
                 mime,
             });
         }
@@ -1325,25 +1370,31 @@ fn xml_body(raw: Option<XmlBody>, fallback_mime: &str, budget: &mut BodyBudget) 
                 size: Some(size),
                 truncated: true,
                 binary: true,
+                bytes: None,
                 mime,
             });
         };
         let allowed = budget.take(bytes.len());
         bytes.truncate(allowed);
         let truncated = (size as usize) > bytes.len();
-        return Some(match std::str::from_utf8(&bytes) {
-            Ok(text) => Body {
-                preview: Some(text.to_string()),
+        let text = std::str::from_utf8(&bytes)
+            .ok()
+            .map(|text| text.to_string());
+        return Some(match text {
+            Some(text) => Body {
+                preview: Some(text),
                 size: Some(size),
                 truncated,
                 binary: false,
+                bytes: None,
                 mime,
             },
-            Err(_) => Body {
+            None => Body {
                 preview: None,
                 size: Some(size),
                 truncated,
                 binary: true,
+                bytes: Some(bytes),
                 mime,
             },
         });
@@ -1354,6 +1405,7 @@ fn xml_body(raw: Option<XmlBody>, fallback_mime: &str, budget: &mut BodyBudget) 
         size: Some(raw.total as u64),
         truncated: allowed < raw.total,
         binary: false,
+        bytes: None,
         mime,
     })
 }
